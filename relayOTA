@@ -205,7 +205,7 @@ void setup() {
 
 void handle_root() {
   // Check for form submission
-  if (server.hasArg("start_time") && server.hasArg("duration")) {
+  if (server.hasArg("start_time") && server.hasArg("duration") && server.hasArg("relay")) {
     int start_time = server.arg("start_time").toInt();
     int duration = server.arg("duration").toInt();
     int relay_num = server.arg("relay").toInt() - 1;
@@ -215,7 +215,7 @@ void handle_root() {
   // Send HTML content
   String html = "<html><head><title>Irrigation Controller</title></head><body>";
   html += "<h1>Irrigation Controller</h1>";
-  html += "<form method='POST' action='/relay'>";
+  html += "<form method='POST' action='/'>";
   html += "<p>Select relay:</p>";
   html += "<select name='relay'>";
   for (int i = 0; i < NUM_RELAYS; i++) {
@@ -231,6 +231,13 @@ void handle_root() {
   server.send(200, "text/html", html);
 }
 
+void set_relay_schedule(int relay_num, int start_time, int duration) {
+  if (relay_num >= 0 && relay_num < NUM_RELAYS) {
+    relay_schedule[relay_num] = start_time;
+    relay_duration[relay_num] = duration;
+  }
+}
+
 void handle_schedule() {
   // Read the start time and duration from the form
   String start_time_str = server.arg("start_time");
@@ -244,6 +251,17 @@ void handle_schedule() {
   for (int i = 0; i < NUM_RELAYS; i++) {
     relay_schedule[i] = start_time;
     relay_duration[i] = duration;
+  }
+
+  // Print the new schedule
+  Serial.println("New relay schedule:");
+  for (int i = 0; i < NUM_RELAYS; i++) {
+    Serial.print("Relay ");
+    Serial.print(i);
+    Serial.print(": start time = ");
+    Serial.print(relay_schedule[i]);
+    Serial.print(", duration = ");
+    Serial.println(relay_duration[i]);
   }
   
   // Redirect to home page
