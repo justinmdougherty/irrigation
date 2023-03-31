@@ -16,15 +16,11 @@
 #define relayAlarm4 33
 
 
-void runSchedule();
 void digitalClockDisplay();
 
 
 WiFiUDP Udp;
 unsigned int localPort = 8888;  // local port to listen for UDP packets
-
-// Time zone info
-//#define TZ_INFO "EST5EDT,M3.2.0,M11.1.0"
 
 // Set to true to define Relay as Normally Open (NO)
 #define RELAY_NO true
@@ -138,31 +134,12 @@ void setup() {
   // Serial port for debugging purposes
   Serial.begin(115200);
 
-  pinMode(relayAlarm1, OUTPUT);
-  pinMode(relayAlarm2, OUTPUT);
-  pinMode(relayAlarm3, OUTPUT);
-  pinMode(relayAlarm4, OUTPUT);
-
-  digitalWrite(relayAlarm1, HIGH);
-  digitalWrite(relayAlarm2, HIGH);
-  digitalWrite(relayAlarm3, HIGH);
-  digitalWrite(relayAlarm4, HIGH);
-
   UpdateNTP();
-
-
-  Serial.println("Setting Alarms...");
- // runSchedule();
-
-
 
   Alarm.alarmRepeat(0, 0, 1, UpdateNTP);
 
   time_t prevDisplay = 0;  // when the digital clock was displayed
 
-
-
-  //timeSync(TZ_INFO, "pool.ntp.org", "time.nis.gov");
 
   // Set all relays to off when the program starts - if set to Normally Open (NO), the relay is off when you set the relay to HIGH
   for (int i = 1; i <= NUM_RELAYS; i++) {
@@ -226,111 +203,52 @@ void setup() {
   server.begin();
 }
 
-void runSchedule(){
-  //***************************** Zone 1 Schedule *****************************************************
-  Serial.println("Setting Schedule ");
-  //Tue
-  Alarm.alarmRepeat(dowTuesday, 17, 25, 0, Zone1On);   // every day at 06:00
-  Alarm.alarmRepeat(dowTuesday, 17, 26, 0, Zone1Off);  // every day at 06:10
-
-  //Thurs
-  Alarm.alarmRepeat(dowThursday, 15, 30, 0, Zone1On);   // every day at 06:00
-  Alarm.alarmRepeat(dowThursday, 15, 40, 0, Zone1Off);  // every day at 06:10
-
-  //Sat
-  Alarm.alarmRepeat(dowSaturday, 15, 30, 0, Zone1On);   // every day at 06:00
-  Alarm.alarmRepeat(dowSaturday, 15, 40, 0, Zone1Off);  // every day at 06:10
-
-  //Sun
-  Alarm.alarmRepeat(dowSunday, 15, 30, 0, Zone1On);   // every day at 06:00
-  Alarm.alarmRepeat(dowSunday, 15, 40, 0, Zone1Off);  // every day at 06:10
-
-  //***************************** Zone 1 Schedule *****************************************************
-
-  //***************************** Zone 2 Schedule *****************************************************
-
-  //Tue
-  Alarm.alarmRepeat(dowTuesday, 15, 40, 5, Zone2On);   // every day at 06:00
-  Alarm.alarmRepeat(dowTuesday, 15, 50, 0, Zone2Off);  // every day at 06:10
-
-  //Thurs
-  Alarm.alarmRepeat(dowThursday, 15, 40, 5, Zone2On);   // every day at 06:00
-  Alarm.alarmRepeat(dowThursday, 15, 50, 0, Zone2Off);  // every day at 06:10
-
-  //Sat
-  Alarm.alarmRepeat(dowSaturday, 15, 40, 5, Zone2On);   // every day at 06:00
-  Alarm.alarmRepeat(dowSaturday, 15, 50, 0, Zone2Off);  // every day at 06:10
-
-  //Sun
-  Alarm.alarmRepeat(dowSunday, 15, 40, 5, Zone2On);   // every day at 06:00
-  Alarm.alarmRepeat(dowSunday, 15, 50, 0, Zone2Off);  // every day at 06:10
-
-  //***************************** Zone 2 Schedule *****************************************************
-
-  //***************************** Zone 3 Schedule *****************************************************
-
-  //Tue
-  Alarm.alarmRepeat(dowTuesday, 15, 50, 5, Zone3On);  // every day at 06:00
-  Alarm.alarmRepeat(dowTuesday, 16, 0, 0, Zone3Off);  // every day at 06:10
-
-  //Thurs
-  Alarm.alarmRepeat(dowThursday, 15, 50, 5, Zone3On);  // every day at 06:00
-  Alarm.alarmRepeat(dowThursday, 16, 0, 0, Zone3Off);  // every day at 06:10
-
-  //Sat
-  Alarm.alarmRepeat(dowSaturday, 15, 50, 5, Zone3On);  // every day at 06:00
-  Alarm.alarmRepeat(dowSaturday, 16, 0, 0, Zone3Off);  // every day at 06:10
-
-  //Sun
-  Alarm.alarmRepeat(dowSunday, 15, 50, 5, Zone3On);  // every day at 06:00
-  Alarm.alarmRepeat(dowSunday, 16, 0, 0, Zone3Off);  // every day at 06:10
-
-  //***************************** Zone 3 Schedule *****************************************************
-
-  //***************************** Zone 4 Schedule *****************************************************
-
-  //Tue
-  Alarm.alarmRepeat(dowTuesday, 16, 0, 5, Zone4On);    // every day at 06:00
-  Alarm.alarmRepeat(dowTuesday, 16, 10, 0, Zone4Off);  // every day at 06:10
-
-  //Thurs
-  Alarm.alarmRepeat(dowThursday, 16, 0, 5, Zone4On);    // every day at 06:00
-  Alarm.alarmRepeat(dowThursday, 16, 10, 0, Zone4Off);  // every day at 06:10
-
-  //Sat
-  Alarm.alarmRepeat(dowSaturday, 16, 0, 5, Zone4On);    // every day at 06:00
-  Alarm.alarmRepeat(dowSaturday, 16, 10, 0, Zone4Off);  // every day at 06:10
-
-  //Sun
-  Alarm.alarmRepeat(dowSunday, 16, 0, 5, Zone4On);    // every day at 06:00
-  Alarm.alarmRepeat(dowSunday, 16, 10, 0, Zone4Off);  // every day at 06:10
-
-  //***************************** Zone 4 Schedule *****************************************************
-
-  //*******************************Test ***************************************************************
-
-  Alarm.alarmRepeat(dowMonday, 17, 39, 0, Zone1On);   // every day at 06:00
-  Alarm.alarmRepeat(dowMonday, 17, 40, 0, Zone1Off);  // every day at 06:10
+void handle_root() {
+  // Check for form submission
+  if (server.hasArg("start_time") && server.hasArg("duration")) {
+    int start_time = server.arg("start_time").toInt();
+    int duration = server.arg("duration").toInt();
+    int relay_num = server.arg("relay").toInt() - 1;
+    set_relay_schedule(relay_num, start_time, duration);
+  }
   
-  Alarm.alarmRepeat(dowTuesday, 17, 39, 0, Zone2On);   // every day at 06:00
-  Alarm.alarmRepeat(dowTuesday, 17, 40, 0, Zone2Off);  // every day at 06:10
-  
-  Alarm.alarmRepeat(dowWednesday, 17, 39, 0, Zone3On);   // every day at 06:00
-  Alarm.alarmRepeat(dowWednesday, 17, 40, 0, Zone3Off);  // every day at 06:10
-  
-  Alarm.alarmRepeat(dowThursday, 17, 39, 0, Zone4On);   // every day at 06:00
-  Alarm.alarmRepeat(dowThursday, 17, 40, 0, Zone4Off);  // every day at 06:10
-  
-  Alarm.alarmRepeat(dowFriday, 17, 39, 0, Zone1On);   // every day at 06:00
-  Alarm.alarmRepeat(dowFriday, 17, 40, 0, Zone1Off);  // every day at 06:10
-  
-  Alarm.alarmRepeat(dowSaturday, 17, 39, 0, Zone2On);   // every day at 06:00
-  Alarm.alarmRepeat(dowSaturday, 17, 40, 0, Zone2Off);  // every day at 06:10
-  
-  Alarm.alarmRepeat(dowSunday, 17, 39, 0, Zone3On);   // every day at 06:00
-  Alarm.alarmRepeat(dowSunday, 17, 40, 0, Zone3Off);  // every day at 06:10
+  // Send HTML content
+  String html = "<html><head><title>Irrigation Controller</title></head><body>";
+  html += "<h1>Irrigation Controller</h1>";
+  html += "<form method='POST' action='/relay'>";
+  html += "<p>Select relay:</p>";
+  html += "<select name='relay'>";
+  for (int i = 0; i < NUM_RELAYS; i++) {
+    html += "<option value='" + String(i+1) + "'>Relay " + String(i+1) + "</option>";
+  }
+  html += "</select><br>";
+  html += "<p>Start time (in minutes since midnight): <input type='text' name='start_time'></p>";
+  html += "<p>Duration (in minutes): <input type='text' name='duration'></p>";
+  html += "<input type='submit' value='Set Schedule'>";
+  html += "</form>";
+  html += "<p><a href='/'>Refresh</a></p>";
+  html += "</body></html>";
+  server.send(200, "text/html", html);
+}
 
-  Serial.println("Schedule Set");
+void handle_schedule() {
+  // Read the start time and duration from the form
+  String start_time_str = server.arg("start_time");
+  String duration_str = server.arg("duration");
+  
+  // Convert start time and duration to integers
+  int start_time = start_time_str.toInt();
+  int duration = duration_str.toInt();
+  
+  // Set the schedule for each relay
+  for (int i = 0; i < NUM_RELAYS; i++) {
+    relay_schedule[i] = start_time;
+    relay_duration[i] = duration;
+  }
+  
+  // Redirect to home page
+  server.sendHeader("Location", String("/"));
+  server.send(302);
 }
 
 time_t prevDisplay = 0;  // when the digital clock was displayed
@@ -340,38 +258,7 @@ void loop() {
   Alarm.delay(1000);
 }
 
-// functions to be called when an alarm triggers:
-void Zone1On() {
-  digitalWrite(relayAlarm1, LOW);
-}
 
-void Zone1Off() {
-  digitalWrite(relayAlarm1, HIGH);
-}
-
-void Zone2On() {
-  digitalWrite(relayAlarm2, LOW);
-}
-
-void Zone2Off() {
-  digitalWrite(relayAlarm2, HIGH);
-}
-
-void Zone3On() {
-  digitalWrite(relayAlarm3, LOW);
-}
-
-void Zone3Off() {
-  digitalWrite(relayAlarm3, HIGH);
-}
-
-void Zone4On() {
-  digitalWrite(relayAlarm4, LOW);
-}
-
-void Zone4Off() {
-  digitalWrite(relayAlarm4, HIGH);
-}
 
 
 void UpdateNTP() {
