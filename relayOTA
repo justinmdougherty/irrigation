@@ -8,8 +8,14 @@
 #include <WiFiUdp.h>
 #include <EEPROM.h>
 
-const char* ssid = "your_SSID";
-const char* password = "your_PASSWORD";
+
+// Replace with your network credentials
+const char* ssid = "xxx";
+const char* password = "xxx";
+
+unsigned long nextIrrigationTime = 0;
+int frequencyIndex = 0;
+
 
 AsyncWebServer server(80);
 
@@ -154,8 +160,6 @@ hw_timer_t * timer = NULL;
 int cycleTime = 60;
 String frequency = "daily";
 
-const int zonePins[numZones] = {27, 26, 25, 33};
-
 void setup() {
   Serial.begin(115200);
   
@@ -179,7 +183,7 @@ void setup() {
 
   // set up web server
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "text/html", indexHtml);
+    request->send(200, "text/html", index_html);
   });
   
   server.on("/update", HTTP_POST, [](AsyncWebServerRequest *request){
@@ -225,7 +229,8 @@ void setup() {
 
 void loop() {
   // check for incoming client requests
-  server.handleClient();
+  server.handleClient(nullptr);
+
 // check if it's time to start the next irrigation cycle
   if (irrigationEnabled && millis() >= nextIrrigationTime) {
     // start irrigation cycle
