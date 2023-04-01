@@ -7,8 +7,6 @@
 #include <Time.h>               
 #include <EEPROM.h>
 
-
-
 // Replace with your network credentials
 const char* ssid = "Fios";
 const char* password = "JustinJamie11!!";
@@ -159,6 +157,8 @@ hw_timer_t * timer = NULL;
 int cycleTime = 60;
 String frequency = "daily";
 
+void irrigationISR();
+
 void setup() {
   Serial.begin(115200);
   
@@ -227,16 +227,24 @@ void setup() {
 }
 
 void loop() {
-  // check for incoming client requests
-  //server.handleClient(nullptr);
-  server.client();
-  delay(1);
+  if (WiFi.status() == WL_CONNECTED) {
+    AsyncElegantOTA.loop();
+     
+    irrigationCheck();
+    
+    WiFiClient client = server.available();
+    if (client) {
+      server.handleClient(client);
+    }
+  } else {
+    connectToWiFi();
+  }
 
 // check if it's time to start the next irrigation cycle
   if (irrigationEnabled && millis() >= nextIrrigationTime) {
     // start irrigation cycle
     currentZone = 0;
-    irrigationISR();
+    irrigationEnabled = true;
     
     // calculate time until next irrigation cycle
     switch (frequencyIndex) {
