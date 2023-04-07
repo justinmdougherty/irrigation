@@ -67,6 +67,9 @@ const char index_html[] PROGMEM = R"rawliteral(
 <body>
   <h2>Irrigation Web Server</h2>
   <h3>9227 Arcadia Dr</h3>
+<input type="number" id="cycleLength" placeholder="Cycle Length (minutes)">
+<input type="time" id="startTime" placeholder="Start Time">
+<button onclick="setSchedule()">Set Schedule</button>
   %BUTTONPLACEHOLDER1%
 <script>function toggleCheckbox(element) {
   var xhr = new XMLHttpRequest();
@@ -244,7 +247,34 @@ void setup() {
   server.begin();
 }
 
+void loop () 
 
+{
+  // Your existing loop code goes here
+  AsyncElegantOTA.loop();
+  // Check if there's data available
+  int packetSize = Udp.parsePacket();
+  if (packetSize) {
+    // Receive incoming UDP packets
+    Serial.print("Received packet of size ");
+    Serial.println(packetSize);
+    Serial.print("From ");
+    IPAddress remote = Udp.remoteIP();
+    Serial.print(remote);
+    Serial.print(", port ");
+    Serial.println(Udp.remotePort());
+
+    // Read the packet into packetBufffer
+    Udp.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);
+    Serial.println("Contents:");
+    Serial.println(packetBuffer);
+
+    // Process the packet
+    processPacket(packetBuffer);
+  }
+  delay(1000);
+  
+}
   // Configure the new route for handling scheduling data
   server.on("/schedule", HTTP_POST, [](AsyncWebServerRequest *request) {
     String message;
@@ -256,6 +286,22 @@ void setup() {
     }
     request->send(200, "text/plain", message);
   });
+
+
+void handleNotFound(AsyncWebServerRequest *request) {
+  if (request->url() == "/schedule" && request->method() == HTTP_POST) {
+    if (request->hasArg("plain")) {
+      processScheduleData(request->arg("plain"));
+      request->send(200, "text/plain", "OK");
+    } else {
+      request->send(400, "text/plain", "Missing POST data");
+    }
+  } else {
+    request->send(404, "text/plain", "Not found");
+  }
+}
+
+
 
 
 void processScheduleData(String data) {
@@ -274,4 +320,76 @@ void processScheduleData(String data) {
   // Implement the scheduling functionality based on the received data and the current time
 }
 
-// Your existing loop and other code goes here
+
+//*-------- NTP code ----------*/
+
+void UpdateNTP() {
+  Serial.println("TimeNTP Example");
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.print("IP number assigned by DHCP is ");
+  Serial.println(WiFi.localIP());
+
+  Serial.println("Starting UDP");
+  Udp.begin(localPort);
+  Serial.print("Local port: ");
+  //Serial.println(Udp.localPort());
+  Serial.println("waiting for sync");
+  setSyncProvider(getNtpTime);
+}
+
+const int NTP_PACKET_SIZE = 48;      // NTP time is in the first 48 bytes of message
+byte packetBuffer[NTP_PACKET_SIZE];  //buffer to hold incoming & outgoing packets
+
+time_t getNtpTime() {
+  while (Udp.parsePacket() > 0)
+    ;  // discard any previously received packets
+  Serial.println("Transmit NTP Request");
+  sendNTPpacket(timeServer);
+  uint32_t beginWait = millis();
+  while (millis() - beginWait < 1500) {
+    int size = Udp.parsePacket();
+    if (size >= NTP_PACKET_SIZE) {
+      Serial.println("Receive NTP Response");
+      Udp.read(packetBuffer, NTP_PACKET_SIZE);  // read packet into the buffer
+      unsigned long secsSince1900;
+      // convert four bytes starting at location 40 to a long integer
+      secsSince1900 = (unsigned long)packetBuffer[40] << 24;
+      secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
+      secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
+      secsSince1900 |= (unsigned long)packetBuffer[43];
+      return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
+    }
+  }
+  Serial.println("No NTP Response :-(");
+  return 0;  // return 0 if unable to get the time
+}
+
+// send an NTP request to the time server at the given address
+void sendNTPpacket(IPAddress& address) {
+  // set all bytes in the buffer to 0
+  memset(packetBuffer, 0, NTP_PACKET_SIZE);
+  // Initialize values needed to form NTP request
+  // (see URL above for details on the packets)
+  packetBuffer[0] = 0b11100011;  // LI, Version, Mode
+  packetBuffer[1] = 0;           // Stratum, or type of clock
+  packetBuffer[2] = 6;           // Polling Interval
+  packetBuffer[3] = 0xEC;        // Peer Clock Precision
+  // 8 bytes of zero for Root Delay & Root Dispersion
+  packetBuffer[12] = 49;
+  packetBuffer[13] = 0x4E;
+  packetBuffer[14] = 49;
+  packetBuffer[15] = 52;
+  // all NTP fields have been given values, now
+  // you can send a packet requesting a timestamp:
+  Udp.beginPacket(address, 123);  //NTP requests are to port 123
+  Udp.write(packetBuffer, NTP_PACKET_SIZE);
+  Udp.endPacket();
+}
