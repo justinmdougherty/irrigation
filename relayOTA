@@ -5,8 +5,12 @@
 #include <AsyncElegantOTA.h>
 #include <ArduinoJson.h>
 #include "time.h"
+#include <Preferences.h>
+#include <WiFiUdp.h>
+#include <NTPClient.h>
 
-void processScheduleData();
+
+Preferences preferences;
 
  // local port to listen for UDP packets
 WiFiUDP Udp;
@@ -71,15 +75,13 @@ const char index_html[] PROGMEM = R"rawliteral(
 <input type="time" id="startTime" placeholder="Start Time">
 <button onclick="setSchedule()">Set Schedule</button>
   %BUTTONPLACEHOLDER1%
-<script>function toggleCheckbox(element) {
+
+<script>
+  function toggleCheckbox(element) {
   var xhr = new XMLHttpRequest();
   if(element.checked){ xhr.open("GET", "/updates?relay="+element.id+"&state=1", true); }
   else { xhr.open("GET", "/updates?relay="+element.id+"&state=0", true); }
   xhr.send();
-}</script>
-
-<script>
-  // ... Your existing script
 
   function setSchedule() {
     var xhr = new XMLHttpRequest();
@@ -94,7 +96,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
     xhr.send(JSON.stringify(data));
   }
-</script>
+}</script>
 </body>
 </html>
 )rawliteral";
@@ -131,12 +133,12 @@ String relayState(int numRelay) {
 }
 
 
-
-
 void setup() {
   // Your existing setup code goes here
    // Serial port for debugging purposes
   Serial.begin(115200);
+  preferences.begin("irrigation", false);
+
 
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
@@ -289,8 +291,25 @@ void loop ()
 
     // Process the packet
     processPacket(packetBuffer);
-  }
-  delay(1000);
+
+    int cycleLength = preferences.getInt("cycleLength", 0);
+  String storedStartTime = preferences.getString("startTime", "00:00");
+
+  // Convert storedStartTime to hour and minute integers
+  int storedStartHour = storedStartTime.substring(0, 2).toInt();
+  int storedStartMinute = storedStartTime.substring(3, 5).toInt();
+
+  // Get the current time
+  time_t now;
+  time(&now);
+  struct tm timeinfo;
+  localtime_r(&now, &timeinfo);
+
+  // Compare the current time with the stored start time and start irrigation if necessary
+  if (timeinfo.tm_hour == storedStartHour && timeinfo
+  
+
+delay(1000);
 
     // Implement the scheduling functionality based on the received data and the current time
   if (scheduleDataReceived) {
