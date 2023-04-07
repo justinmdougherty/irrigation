@@ -77,6 +77,24 @@ const char index_html[] PROGMEM = R"rawliteral(
   else { xhr.open("GET", "/updates?relay="+element.id+"&state=0", true); }
   xhr.send();
 }</script>
+
+<script>
+  // ... Your existing script
+
+  function setSchedule() {
+    var xhr = new XMLHttpRequest();
+    var cycleLength = document.getElementById("cycleLength").value;
+    var startTime = document.getElementById("startTime").value;
+    var data = {
+      cycleLength: cycleLength,
+      startTime: startTime
+    };
+
+    xhr.open("POST", "/schedule", true);
+    xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
+    xhr.send(JSON.stringify(data));
+  }
+</script>
 </body>
 </html>
 )rawliteral";
@@ -273,7 +291,65 @@ void loop ()
     processPacket(packetBuffer);
   }
   delay(1000);
-  
+
+    // Implement the scheduling functionality based on the received data and the current time
+  if (scheduleDataReceived) {
+    // Get the current time
+    time_t now = time(nullptr);
+    // Get the current hour and minute
+    int currentHour = hour(now);
+    int currentMinute = minute(now);
+    // Check if the current time matches the scheduled time
+    if (currentHour == scheduledHour && currentMinute == scheduledMinute) {
+      // Check if the scheduled action is to turn on the relay
+      if (scheduledAction == "on") {
+        // Turn on the relay
+        digitalWrite(relayGPIOs[scheduledRelay - 1], RELAY_NO ? LOW : HIGH);
+      } else {
+        // Turn off the relay
+        digitalWrite(relayGPIOs[scheduledRelay - 1], RELAY_NO ? HIGH : LOW);
+      }
+      // Reset the flag
+      scheduleDataReceived = false;
+    }
+  }
+
+    // Check if the stored schedule data indicates it's time to start the irrigation cycle
+  // If so, run the irrigation cycle for the specified duration
+  if (scheduleDataReceived) {
+    // Get the current time
+    time_t now = time(nullptr);
+    // Get the current hour and minute
+    int currentHour = hour(now);
+    int currentMinute = minute(now);
+    // Check if the current time matches the scheduled time
+    if (currentHour == scheduledHour && currentMinute == scheduledMinute) {
+      // Check if the scheduled action is to turn on the relay
+      if (scheduledAction == "on") {
+        // Turn on the relay
+        digitalWrite(relayGPIOs[scheduledRelay - 1], RELAY_NO ? LOW : HIGH);
+        // Start the irrigation cycle timer
+        irrigationCycleTimer = millis();
+      } else {
+        // Turn off the relay
+        digitalWrite(relayGPIOs[scheduledRelay - 1], RELAY_NO ? HIGH : LOW);
+      }
+      // Reset the flag
+      scheduleDataReceived = false;
+    }
+  }
+  // Check if the irrigation cycle timer is running
+  if (irrigationCycleTimer > 0) {
+    // Check if the irrigation cycle has completed
+    if (millis() - irrigationCycleTimer > scheduledDuration * 1000) {
+      // Turn off the relay
+      digitalWrite(relayGPIOs[scheduledRelay - 1], RELAY_NO ? HIGH : LOW);
+      // Reset the irrigation cycle timer
+      irrigationCycleTimer = 0;
+    }
+  }
+
+
 }
   // Configure the new route for handling scheduling data
   server.on("/schedule", HTTP_POST, [](AsyncWebServerRequest *request) {
@@ -290,7 +366,7 @@ void loop ()
 
 void handleNotFound(AsyncWebServerRequest *request) {
   if (request->url() == "/schedule" && request->method() == HTTP_POST) {
-    if (request->hasArg("plain")) {
+    if (request->contentType() == "application/json") {
       processScheduleData(request->arg("plain"));
       request->send(200, "text/plain", "OK");
     } else {
@@ -301,9 +377,6 @@ void handleNotFound(AsyncWebServerRequest *request) {
   }
 }
 
-
-
-
 void processScheduleData(String data) {
   StaticJsonDocument<1024> doc;
   deserializeJson(doc, data);
@@ -313,11 +386,19 @@ void processScheduleData(String data) {
   int cycleLength = doc["cycleLength"];
   String startTime = doc["startTime"];
   JsonArray daysOfWeek = doc["daysOfWeek"];
+  JsonArray intervals = doc["intervals"];
+
   // ... and so on for the interval-based watering functionality
 
-  // Save the schedule data in non-volatile memory (EEPROM or SPIFFS)
+  // Save the schedule data in non-volatile memory SPIFFS
+  File file = SPIFFS.open("/schedule.json", "w");
+  if (!file) {
+    Serial.println("Failed to open file for writing");
+    return;
+  }
+  serializeJson(doc, file);
+  file.close();
 
-  // Implement the scheduling functionality based on the received data and the current time
 }
 
 
