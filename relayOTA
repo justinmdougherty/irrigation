@@ -1,18 +1,37 @@
-// Include the necessary libraries
-#include <WiFi.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
-#include <AsyncElegantOTA.h>
-#include <ArduinoJson.h>
-#include "time.h"
-#include <Preferences.h>
+
+
+// Import required libraries
+#include <TimeAlarms.h>         //
+#include <WiFi.h>               //
+#include <AsyncTCP.h>           //
+#include <ESPAsyncWebServer.h>  //
+#include <AsyncElegantOTA.h>    //
+#include <TimeLib.h>            //
+#include <Time.h>               //
 #include <WiFiUdp.h>
-#include <NTPClient.h>
+//#include <EEPROM.h>
+#include <Preferences.h>
 
 
+
+#define relayAlarm1 27
+#define relayAlarm2 33
+#define relayAlarm3 26
+#define relayAlarm4 25
+//#define relayAlarm5 15
+//#define relayAlarm6 2
+//#define relayAlarm7 0
+//#define relayAlarm8 4
+
+bool scheduleEnabled = false;  // Set it to true or false based on your initial preference
+//const int EEPROM_SCHEDULE_STATE_ADDR = 0;
 Preferences preferences;
 
- // local port to listen for UDP packets
+
+void runSchedule();
+void digitalClockDisplay();
+
+
 WiFiUDP Udp;
 unsigned int localPort = 8888;  // local port to listen for UDP packets
 
@@ -20,10 +39,12 @@ unsigned int localPort = 8888;  // local port to listen for UDP packets
 #define RELAY_NO true
 
 // Set number of relays
+//#define NUM_RELAYS 8
 #define NUM_RELAYS 4
 
 // Assign each GPIO to a relay
-int relayGPIOs[NUM_RELAYS] = { 27, 26, 25, 33 };
+//int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25, 15, 2, 0, 4 };
+int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25 };
 
 // Replace with your network credentials
 const char* ssid = "Fios";
@@ -56,61 +77,90 @@ const char index_html[] PROGMEM = R"rawliteral(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     html {font-family: Arial; display: inline-block; text-align: center; color: white;}
-    h2 {font-size: 3.0rem;}
+    h2 {font-size: 3.0rem; text-align: center;}
     h3 {font-size: 2.0rem;}
     p {font-size: 3.0rem;}
-    body {max-width: 600px; margin:0px auto; padding-bottom: 25px; background-color: #000;}
+    body {max-width: 600px; margin:0px auto; padding-bottom: 25px; text-align: left; padding-left: 25px; background-color: #000;}
     .switch {position: relative; display: inline-block; width: 120px; height: 68px} 
     .switch input {display: none}
     .slider {position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: #fff; border-radius: 34px}
     .slider:before {position: absolute; content: ""; height: 52px; width: 52px; left: 8px; bottom: 8px; background-color: #666; -webkit-transition: .4s; transition: .4s; border-radius: 68px}
     input:checked+.slider {background-color: #2196F3}
     input:checked+.slider:before {-webkit-transform: translateX(52px); -ms-transform: translateX(52px); transform: translateX(52px)}
+    a:link, a:visited {color: blue;}
   </style>
 </head>
 <body>
-  <h2>Irrigation Web Server</h2>
-  <h3>9227 Arcadia Dr</h3>
-<input type="number" id="cycleLength" placeholder="Cycle Length (minutes)">
-<input type="time" id="startTime" placeholder="Start Time">
-<button onclick="setSchedule()">Set Schedule</button>
-  %BUTTONPLACEHOLDER1%
+  <h3>Irrigation Web Server</h3>
+  Last Updated: 4/10/2023 <br>
+  Schedule runs every day<br>
+  for 20 minutes at 4PM<br>
+  <a href="/update">Update</a>
+  
+ <h3>Schedule On/Off</h3>
+<label class="switch">
+  <input type="checkbox" id="scheduleSlider" onchange="toggleSchedule(this)">
+  <span class="slider"></span>
+</label>
+<p id="scheduleStateText"></p>
+
+
+
+
+%BUTTONPLACEHOLDER%
 
 <script>
-  function toggleCheckbox(element) {
+function toggleCheckbox(element) {
   var xhr = new XMLHttpRequest();
   if(element.checked){ xhr.open("GET", "/updates?relay="+element.id+"&state=1", true); }
   else { xhr.open("GET", "/updates?relay="+element.id+"&state=0", true); }
   xhr.send();
+}
 
-  function setSchedule() {
-    var xhr = new XMLHttpRequest();
-    var cycleLength = document.getElementById("cycleLength").value;
-    var startTime = document.getElementById("startTime").value;
-    var data = {
-      cycleLength: cycleLength,
-      startTime: startTime
-    };
-
-    xhr.open("POST", "/schedule", true);
-    xhr.setRequestHeader("Content-Type", "application/json;charset=UTF-8");
-    xhr.send(JSON.stringify(data));
+function toggleSchedule(element) {
+  var xhr = new XMLHttpRequest();
+  if (element.checked) {
+    xhr.open("GET", "/schedule?state=1", true);
+    document.getElementById("scheduleStateText").innerHTML = "Schedule ON";
+  } else {
+    xhr.open("GET", "/schedule?state=0", true);
+    document.getElementById("scheduleStateText").innerHTML = "Schedule OFF";
   }
-}</script>
+  xhr.send();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Request the state of the schedule on/off slider when the page is loaded
+  var xhr = new XMLHttpRequest();
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState == 4 && xhr.status == 200) {
+      var scheduleState = xhr.responseText == "1";
+      document.getElementById("scheduleSlider").checked = scheduleState;
+      document.getElementById("scheduleStateText").innerHTML = scheduleState ? "Schedule ON" : "Schedule OFF";
+    }
+  }
+  xhr.open("GET", "/getScheduleState", true);
+  xhr.send();
+});
+</script>
+
+
 </body>
 </html>
 )rawliteral";
 
 // Replaces placeholder with button section in your web page
+
 String processor(const String& var) {
-  //Serial.println(var);
-  if (var == "BUTTONPLACEHOLDER1") {
+  if (var == "BUTTONPLACEHOLDER") {
     String buttons = "";
     for (int i = 1; i <= NUM_RELAYS; i++) {
       String relayStateValue = relayState(i);
       buttons += "<h4>Zone #" + String(i) + "</h4><label class=\"switch\"><input type=\"checkbox\" onchange=\"toggleCheckbox(this)\" id=\"" + String(i) + "\" " + relayStateValue + "><span class=\"slider\"></span></label>";
     }
     return buttons;
+  } else if (var == "SCHEDULESTATE") {
+    return scheduleEnabled ? "checked" : "";
   }
   return String();
 }
@@ -132,13 +182,66 @@ String relayState(int numRelay) {
   return "";
 }
 
-
 void setup() {
-  // Your existing setup code goes here
-   // Serial port for debugging purposes
+  // Serial port for debugging purposes
   Serial.begin(115200);
-  preferences.begin("irrigation", false);
 
+preferences.begin("irrigation", false);
+scheduleEnabled = preferences.getBool("scheduleEnabled", true);
+
+/*
+  EEPROM.begin(512);
+  uint8_t eepromValue = EEPROM.read(EEPROM_SCHEDULE_STATE_ADDR);
+
+  if (eepromValue == 0xFF) {  // EEPROM is uninitialized
+    scheduleEnabled = true;   // Set the default state for the schedule
+    EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, scheduleEnabled);
+    EEPROM.commit();
+  } else {
+    scheduleEnabled = eepromValue;
+  }
+
+*/
+  pinMode(relayAlarm1, OUTPUT);
+  pinMode(relayAlarm2, OUTPUT);
+  pinMode(relayAlarm3, OUTPUT);
+  pinMode(relayAlarm4, OUTPUT);
+  //pinMode(relayAlarm5, OUTPUT);
+  //pinMode(relayAlarm7, OUTPUT);
+  //pinMode(relayAlarm7, OUTPUT);
+  //pinMode(relayAlarm8, OUTPUT);
+
+  digitalWrite(relayAlarm1, HIGH);
+  digitalWrite(relayAlarm2, HIGH);
+  digitalWrite(relayAlarm3, HIGH);
+  digitalWrite(relayAlarm4, HIGH);
+  //digitalWrite(relayAlarm5, HIGH);
+  //digitalWrite(relayAlarm6, HIGH);
+  //digitalWrite(relayAlarm7, HIGH);
+  //digitalWrite(relayAlarm8, HIGH);
+
+  UpdateNTP();
+
+  runSchedule();  // Add this line to call the runSchedule function
+
+  Serial.println("Setting Alarms...");
+
+  Alarm.alarmRepeat(0, 0, 1, UpdateNTP);
+
+  time_t prevDisplay = 0;  // when the digital clock was displayed
+
+
+
+
+  // Set all relays to off when the program starts - if set to Normally Open (NO), the relay is off when you set the relay to HIGH
+  for (int i = 1; i <= NUM_RELAYS; i++) {
+    pinMode(relayGPIOs[i - 1], OUTPUT);
+    if (RELAY_NO) {
+      digitalWrite(relayGPIOs[i - 1], HIGH);
+    } else {
+      digitalWrite(relayGPIOs[i - 1], LOW);
+    }
+  }
 
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
@@ -150,278 +253,288 @@ void setup() {
   // Print ESP32 Local IP Address
   Serial.println(WiFi.localIP());
 
-  // Start UDP
-  Udp.begin(localPort);
-  Serial.print("Local port: ");
-  Serial.println(Udp.localPort());
-
-  // Start ElegantOTA
-  AsyncElegantOTA.begin(&server);    // Start ElegantOTA
-
   // Route for root / web page
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(SPIFFS, "/index.html", "text/html");
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send_P(200, "text/html", index_html, processor);
   });
 
-  // Send a GET request to <ESP_IP>/get?relay=<inputMessage>
-  server.on("/get", HTTP_GET, [] (AsyncWebServerRequest *request) {
+
+  //Send a GET request to <ESP_IP>/update?relay=<inputMessage>&state=<inputMessage2>
+  server.on("/updates", HTTP_GET, [](AsyncWebServerRequest* request) {
+    String inputMessage;
+    String inputParam;
+    String inputMessage2;
+    String inputParam2;
+
+    //GET input1 value on <ESP_IP>/update?relay=<inputMessage>
+    if (request->hasParam(PARAM_INPUT_1) & request->hasParam(PARAM_INPUT_2)) {
+      inputMessage = request->getParam(PARAM_INPUT_1)->value();
+      inputParam = PARAM_INPUT_1;
+      inputMessage2 = request->getParam(PARAM_INPUT_2)->value();
+      inputParam2 = PARAM_INPUT_2;
+      if (RELAY_NO) {
+        Serial.print("NO ");
+        digitalWrite(relayGPIOs[inputMessage.toInt() - 1], !inputMessage2.toInt());
+
+      } else {
+        Serial.print("NC ");
+        digitalWrite(relayGPIOs[inputMessage.toInt() - 1], inputMessage2.toInt());
+      }
+    } else {
+      inputMessage = "No message sent";
+      inputParam = "none";
+    }
+    Serial.println(inputMessage + inputMessage2);
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Add the following route after the /updates route in the setup function
+  server.on("/schedule", HTTP_GET, [](AsyncWebServerRequest* request) {
     String inputMessage;
     String inputParam;
 
-    // GET relay1 status on <ESP_IP>/get?relay=relay1
+    // GET input value on <ESP_IP>/schedule?state=<inputMessage>
     if (request->hasParam(PARAM_INPUT_1)) {
       inputMessage = request->getParam(PARAM_INPUT_1)->value();
-      if (inputMessage == "relay1") {
-        inputParam = digitalRead(relayGPIOs[0]) ? "ON" : "OFF";
+      inputParam = PARAM_INPUT_1;
+      // Enable or disable the schedule based on the received value
+      if (inputMessage.toInt() == 1) {
+        // Enable the schedule
+        scheduleEnabled = true;
+      } else {
+        // Disable the schedule
+        scheduleEnabled = false;
       }
-      else if (inputMessage == "relay2") {
-        inputParam = digitalRead(relayGPIOs[1]) ? "ON" : "OFF";
-      }
-      else if (inputMessage == "relay3") {
-        inputParam = digitalRead(relayGPIOs[2]) ? "ON" : "OFF";
-      }
-      else if (inputMessage == "relay4") {
-        inputParam = digitalRead(relayGPIOs[3]) ? "ON" : "OFF";
-      }
-      else {
-        inputParam = "Invalid relay";
-      }
+      // Save the schedule state in the EEPROM
+      //EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, scheduleEnabled);
+      //EEPROM.commit();
+    
+      // Save the schedule state in the Preferences
+      preferences.putBool("scheduleEnabled", scheduleEnabled);
+
+
+    } else {
+      inputMessage = "No message sent";
+      inputParam = "none";
     }
-    else {
-      inputParam = "No message sent";
-    }
-    // Send status message back to client
-    request->send(200, "text/plain", inputParam);
+    Serial.println(inputMessage);
+    request->send(200, "text/plain", "OK");
   });
 
-  // Send a GET request to <ESP_IP>/set?relay=<inputMessage>&state=<inputMessage>
-  server.on("/set", HTTP_GET, [] (AsyncWebServerRequest *request) {
-    String inputMessage;
-    String inputParam;
-
-    // GET relay1 status on <ESP_IP>/set?relay=relay1&state=on
-    if (request->hasParam(PARAM_INPUT_1) && request->hasParam(PARAM_INPUT_2)) {
-      inputMessage = request->getParam(PARAM_INPUT_1)->value();
-      if (inputMessage == "relay1") {
-        inputParam = request->getParam(PARAM_INPUT_2)->value();
-        if (inputParam == "on") {
-          digitalWrite(relayGPIOs[0], RELAY_NO ? LOW : HIGH);
-        }
-        else if (inputParam == "off") {
-          digitalWrite(relayGPIOs[0], RELAY_NO ? HIGH : LOW);
-        }
-        else {
-          inputParam = "Invalid state";
-        }
-      }
-      else if (inputMessage == "relay2") {
-        inputParam = request->getParam(PARAM_INPUT_2)->value();
-        if (inputParam == "on") {
-          digitalWrite(relayGPIOs[1], RELAY_NO ? LOW : HIGH);
-        }
-        else if (inputParam == "off") {
-          digitalWrite(relayGPIOs[1], RELAY_NO ? HIGH : LOW);
-        }
-        else {
-          inputParam = "Invalid state";
-        }
-      }
-      else if (inputMessage == "relay3") {
-        inputParam = request->getParam(PARAM_INPUT_2)->value();
-        if (inputParam == "on") {
-          digitalWrite(relayGPIOs[2], RELAY_NO ? LOW : HIGH);
-        }
-        else if (inputParam == "off") {
-          digitalWrite(relayGPIOs[2], RELAY_NO ? HIGH : LOW);
-        }
-        else {
-          inputParam = "Invalid state";
-        }
-      }
-      else if (inputMessage == "relay4") {
-        inputParam = request->getParam(PARAM_INPUT_2)->value();
-        if (inputParam == "on") {
-          digitalWrite(relayGPIOs[3], RELAY_NO ? LOW : HIGH);
-        }
-        else if (inputParam == "off") {
-          digitalWrite(relayGPIOs[3], RELAY_NO ? HIGH : LOW);
-        }
-        else {
-          inputParam = "Invalid state";
-        }
-      }
-      else {
-        inputParam = "Invalid relay";
-
-      }
-
-    }
-    else {
-      inputParam = "No message sent";
-    }
-    // Send status message back to client
-    request->send(200, "text/plain", inputParam);
+  server.on("/getScheduleState", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send(200, "text/plain", String(scheduleEnabled ? 1 : 0));
   });
 
   // Start server
+  AsyncElegantOTA.begin(&server);
   server.begin();
 }
 
-void loop () 
 
-{
-  // Your existing loop code goes here
-  AsyncElegantOTA.loop();
-  // Check if there's data available
-  int packetSize = Udp.parsePacket();
-  if (packetSize) {
-    // Receive incoming UDP packets
-    Serial.print("Received packet of size ");
-    Serial.println(packetSize);
-    Serial.print("From ");
-    IPAddress remote = Udp.remoteIP();
-    Serial.print(remote);
-    Serial.print(", port ");
-    Serial.println(Udp.remotePort());
+void runSchedule() {
 
-    // Read the packet into packetBufffer
-    Udp.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);
-    Serial.println("Contents:");
-    Serial.println(packetBuffer);
+  if (scheduleEnabled) {
 
-    // Process the packet
-    processPacket(packetBuffer);
+    // Set the start time for the daily test at 4:00 PM
+    int testStartHour = 16;
+    int testStartMinute = 0;
 
-    int cycleLength = preferences.getInt("cycleLength", 0);
-  String storedStartTime = preferences.getString("startTime", "00:00");
+    //***************************** Zone 1 Schedule *****************************************************
+    Serial.println("Setting Schedule ");
 
-  // Convert storedStartTime to hour and minute integers
-  int storedStartHour = storedStartTime.substring(0, 2).toInt();
-  int storedStartMinute = storedStartTime.substring(3, 5).toInt();
+    // Daily test
+    Alarm.alarmRepeat(testStartHour, testStartMinute, 0, Zone1On);
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 20, 0, Zone1Off);
 
-  // Get the current time
-  time_t now;
-  time(&now);
-  struct tm timeinfo;
-  localtime_r(&now, &timeinfo);
+    //***************************** Zone 1 Schedule *****************************************************
 
-  // Compare the current time with the stored start time and start irrigation if necessary
-  if (timeinfo.tm_hour == storedStartHour && timeinfo
-  
+    //***************************** Zone 2 Schedule *****************************************************
 
-delay(1000);
+    // Daily test
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 20, 0, Zone2On);
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 40, 0, Zone2Off);
 
-    // Implement the scheduling functionality based on the received data and the current time
-  if (scheduleDataReceived) {
-    // Get the current time
-    time_t now = time(nullptr);
-    // Get the current hour and minute
-    int currentHour = hour(now);
-    int currentMinute = minute(now);
-    // Check if the current time matches the scheduled time
-    if (currentHour == scheduledHour && currentMinute == scheduledMinute) {
-      // Check if the scheduled action is to turn on the relay
-      if (scheduledAction == "on") {
-        // Turn on the relay
-        digitalWrite(relayGPIOs[scheduledRelay - 1], RELAY_NO ? LOW : HIGH);
-      } else {
-        // Turn off the relay
-        digitalWrite(relayGPIOs[scheduledRelay - 1], RELAY_NO ? HIGH : LOW);
-      }
-      // Reset the flag
-      scheduleDataReceived = false;
-    }
-  }
+    //***************************** Zone 2 Schedule *****************************************************
 
-    // Check if the stored schedule data indicates it's time to start the irrigation cycle
-  // If so, run the irrigation cycle for the specified duration
-  if (scheduleDataReceived) {
-    // Get the current time
-    time_t now = time(nullptr);
-    // Get the current hour and minute
-    int currentHour = hour(now);
-    int currentMinute = minute(now);
-    // Check if the current time matches the scheduled time
-    if (currentHour == scheduledHour && currentMinute == scheduledMinute) {
-      // Check if the scheduled action is to turn on the relay
-      if (scheduledAction == "on") {
-        // Turn on the relay
-        digitalWrite(relayGPIOs[scheduledRelay - 1], RELAY_NO ? LOW : HIGH);
-        // Start the irrigation cycle timer
-        irrigationCycleTimer = millis();
-      } else {
-        // Turn off the relay
-        digitalWrite(relayGPIOs[scheduledRelay - 1], RELAY_NO ? HIGH : LOW);
-      }
-      // Reset the flag
-      scheduleDataReceived = false;
-    }
-  }
-  // Check if the irrigation cycle timer is running
-  if (irrigationCycleTimer > 0) {
-    // Check if the irrigation cycle has completed
-    if (millis() - irrigationCycleTimer > scheduledDuration * 1000) {
-      // Turn off the relay
-      digitalWrite(relayGPIOs[scheduledRelay - 1], RELAY_NO ? HIGH : LOW);
-      // Reset the irrigation cycle timer
-      irrigationCycleTimer = 0;
-    }
-  }
+    //***************************** Zone 3 Schedule *****************************************************
 
+    // Daily test
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 40, 0, Zone3On);
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 60, 0, Zone3Off);
 
-}
-  // Configure the new route for handling scheduling data
-  server.on("/schedule", HTTP_POST, [](AsyncWebServerRequest *request) {
-    String message;
-    if (request->hasParam("scheduleData", true)) {
-      message = request->getParam("scheduleData", true)->value();
-      processScheduleData(message);
-    } else {
-      message = "No schedule data received";
-    }
-    request->send(200, "text/plain", message);
-  });
+    //***************************** Zone 3 Schedule *****************************************************
 
+    //***************************** Zone 4 Schedule *****************************************************
 
-void handleNotFound(AsyncWebServerRequest *request) {
-  if (request->url() == "/schedule" && request->method() == HTTP_POST) {
-    if (request->contentType() == "application/json") {
-      processScheduleData(request->arg("plain"));
-      request->send(200, "text/plain", "OK");
-    } else {
-      request->send(400, "text/plain", "Missing POST data");
-    }
+    // Daily test
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 60, 0, Zone4On);
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 80, 0, Zone4Off);
+
+    //***************************** Zone 4 Schedule *****************************************************
+
+    /*
+
+  //***************************** Zone 5 Schedule *****************************************************
+  Serial.println("Setting Schedule ");
+
+  // Daily test
+  Alarm.alarmRepeat(testStartHour, testStartMinute, 80, Zone5On);
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 100, 0, Zone5Off);
+
+  //***************************** Zone 5 Schedule *****************************************************
+
+  //***************************** Zone 6 Schedule *****************************************************
+
+  // Daily test
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 100, 0, Zone6On);
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 120, 0, Zone6Off);
+
+  //***************************** Zone 6 Schedule *****************************************************
+
+  //***************************** Zone 7 Schedule *****************************************************
+
+  // Daily test
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 120, 0, Zone7On);
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 140, 0, Zone7Off);
+
+  //***************************** Zone 7 Schedule *****************************************************
+
+  //***************************** Zone 8 Schedule *****************************************************
+
+  // Daily test
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 140, 0, Zone8On);
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 160, 0, Zone8Off);
+
+  //***************************** Zone 8 Schedule *****************************************************
+ */
+
   } else {
-    request->send(404, "text/plain", "Not found");
+
+    Serial.println("No Schedule to run");
   }
 }
 
-void processScheduleData(String data) {
-  StaticJsonDocument<1024> doc;
-  deserializeJson(doc, data);
 
-  // Parse the received data and store it in appropriate variables
-  // For example:
-  int cycleLength = doc["cycleLength"];
-  String startTime = doc["startTime"];
-  JsonArray daysOfWeek = doc["daysOfWeek"];
-  JsonArray intervals = doc["intervals"];
 
-  // ... and so on for the interval-based watering functionality
 
-  // Save the schedule data in non-volatile memory SPIFFS
-  File file = SPIFFS.open("/schedule.json", "w");
-  if (!file) {
-    Serial.println("Failed to open file for writing");
-    return;
+/* void setZoneSchedule(int zone, int startHour, int startMinute, int duration, int daysOfWeek[]) {
+  void (*zoneOn)();
+  void (*zoneOff)();
+
+  switch (zone) {
+    case 1:
+      zoneOn = Zone1On;
+      zoneOff = Zone1Off;
+      break;
+    case 2:
+      zoneOn = Zone2On;
+      zoneOff = Zone2Off;
+      break;
+    case 3:
+      zoneOn = Zone3On;
+      zoneOff = Zone3Off;
+      break;
+    case 4:
+      zoneOn = Zone4On;
+      zoneOff = Zone4Off;
+      break;
   }
-  serializeJson(doc, file);
-  file.close();
 
+  int endHour = startHour + (startMinute + duration) / 60;
+  int endMinute = (startMinute + duration) % 60;
+
+  for (int i = 0; daysOfWeek[i] != -1; i++) {
+    Alarm.alarmRepeat(daysOfWeek[i], startHour, startMinute, 0, zoneOn);
+    Alarm.alarmRepeat(daysOfWeek[i], endHour, endMinute, 0, zoneOff);
+  }
 }
 
+void runSchedule() {
+  Serial.println("Setting Schedule ");
+  int days[] = {dowTuesday, dowThursday, dowSaturday, dowSunday, -1};
 
-//*-------- NTP code ----------*/
+  for (int zone = 1; zone <= 4; zone++) {
+    int startHour = 16;
+    int startMinute = (zone - 1) * 20;
+    setZoneSchedule(zone, startHour, startMinute, 20, days);
+  }
+}
+
+*/
+time_t prevDisplay = 0;  // when the digital clock was displayed
+
+void loop() {
+  digitalClockDisplay();
+  Alarm.delay(1000);
+}
+
+// functions to be called when an alarm triggers:
+void Zone1On() {
+  digitalWrite(relayAlarm1, LOW);
+}
+
+void Zone1Off() {
+  digitalWrite(relayAlarm1, HIGH);
+}
+
+void Zone2On() {
+  digitalWrite(relayAlarm2, LOW);
+}
+
+void Zone2Off() {
+  digitalWrite(relayAlarm2, HIGH);
+}
+
+void Zone3On() {
+  digitalWrite(relayAlarm3, LOW);
+}
+
+void Zone3Off() {
+  digitalWrite(relayAlarm3, HIGH);
+}
+
+void Zone4On() {
+  digitalWrite(relayAlarm4, LOW);
+}
+
+void Zone4Off() {
+  digitalWrite(relayAlarm4, HIGH);
+}
+
+/* Uncomment these to turn on more zones *************************************************************************************************
+void Zone5On() {
+  digitalWrite(relayAlarm5, LOW);
+}
+
+void Zone5Off() {
+  digitalWrite(relayAlarm5, HIGH);
+}
+
+void Zone6On() {
+  digitalWrite(relayAlarm6, LOW);
+}
+
+void Zone6Off() {
+  digitalWrite(relayAlarm6, HIGH);
+}
+
+void Zone7On() {
+  digitalWrite(relayAlarm7, LOW);
+}
+
+void Zone7Off() {
+  digitalWrite(relayAlarm7, HIGH);
+}
+
+void Zone8On() {
+  digitalWrite(relayAlarm8, LOW);
+}
+
+void Zone8Off() {
+  digitalWrite(relayAlarm8, HIGH);
+}
+*/
+//Uncomment these to turn on more zones *************************************************************************************************
 
 void UpdateNTP() {
   Serial.println("TimeNTP Example");
@@ -444,6 +557,32 @@ void UpdateNTP() {
   Serial.println("waiting for sync");
   setSyncProvider(getNtpTime);
 }
+
+void digitalClockDisplay() {
+  // digital clock display of the time
+  Serial.print(hour());
+  printDigits(minute());
+  printDigits(second());
+  Serial.print(" ");
+  Serial.print(day());
+  Serial.print(".");
+  Serial.print(month());
+  Serial.print(".");
+  Serial.print(year());
+  Serial.println();
+}
+
+
+
+void printDigits(int digits) {
+  // utility for digital clock display: prints preceding colon and leading 0
+  Serial.print(":");
+  if (digits < 10)
+    Serial.print('0');
+  Serial.print(digits);
+}
+
+/*-------- NTP code ----------*/
 
 const int NTP_PACKET_SIZE = 48;      // NTP time is in the first 48 bytes of message
 byte packetBuffer[NTP_PACKET_SIZE];  //buffer to hold incoming & outgoing packets
