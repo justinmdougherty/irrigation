@@ -10,7 +10,7 @@
 #include <Time.h>               //
 #include <WiFiUdp.h>
 #include <EEPROM.h>
-#include <vector.h>
+#include <vector>
 
 std::vector<int> selectedDays;
 
@@ -27,10 +27,12 @@ const char UPLOAD_TIME[] = __DATE__ " " __TIME__;
 //#define relayAlarm8 4
 
 
+const int EEPROM_SCHEDULE_STATE_ADDR = 0;
 const int EEPROM_DURATION_ADDR = 4;
 const int EEPROM_STARTTIME_ADDR = 8;
 const int EEPROM_DAYS_ADDR = 12;
 const int EEPROM_MAX_DAYS_LENGTH = 20;  // Assuming a maximum of 20 characters for the days string
+
 
 
 void runSchedule();
@@ -297,9 +299,9 @@ void setup() {
   EEPROM.begin(512);
   // Read saved values from EEPROM
   scheduleEnabled = EEPROM.read(EEPROM_SCHEDULE_STATE_ADDR);
-  duration = EEPROM.readString(EEPROM_DURATION_ADDRESS);
-  startTime = EEPROM.readString(EEPROM_STARTTIME_ADDRESS);
-  daysArray = EEPROM.readString(EEPROM_DAYS_ADDRESS);
+  duration = EEPROM.readString(EEPROM_DURATION_ADDR);
+  startTime = EEPROM.readString(EEPROM_STARTTIME_ADDR);
+  daysArray = EEPROM.readString(EEPROM_DAYS_ADDR);
 
   bool scheduleEnabled = loadScheduleState();
 
@@ -395,7 +397,7 @@ void setup() {
       String state = request->getParam("state")->value();
       scheduleEnabled = (state == "1");
       saveScheduleState(scheduleEnabled);
-      
+
       if (request->hasParam(PARAM_SCHEDULE_ENABLED)) {
         scheduleEnabled = request->getParam(PARAM_SCHEDULE_ENABLED)->value().toInt();
         EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, scheduleEnabled);
@@ -404,7 +406,7 @@ void setup() {
 
       if (request->hasParam(PARAM_DURATION)) {
         duration = request->getParam(PARAM_DURATION)->value();
-        EEPROM.writeString(EEPROM_DURATION_ADDRESS, duration);
+        EEPROM.writeString(EEPROM_DURATION_ADDR, duration);
         EEPROM.commit();
       }
 
@@ -424,71 +426,71 @@ void setup() {
     } else {
       disableSchedule();
     }
-    }
+
     request->send(200, "text/plain", scheduleEnabled ? "1" : "0");
-});
+  });
 
-void disableSchedule() {
-  for (int i = 0; i < dtNBR_ALARMS; i++) {
-    Alarm.disable(i);
+  void disableSchedule() {
+    for (int i = 0; i < dtNBR_ALARMS; i++) {
+      Alarm.disable(i);
+    }
   }
-}
 
-void saveDuration(int duration) {
-  EEPROM.put(EEPROM_DURATION_ADDR, duration);
-  EEPROM.commit();
-}
-
-int loadDuration() {
-  int duration;
-  EEPROM.get(EEPROM_DURATION_ADDR, duration);
-  return duration;
-}
-
-void saveStartTime(String startTime) {
-  for (int i = 0; i < startTime.length(); i++) {
-    EEPROM.write(EEPROM_STARTTIME_ADDR + i, startTime[i]);
+  void saveDuration(int duration) {
+    EEPROM.put(EEPROM_DURATION_ADDR, duration);
+    EEPROM.commit();
   }
-  EEPROM.write(EEPROM_STARTTIME_ADDR + startTime.length(), '\0');
-  EEPROM.commit();
-}
 
-String loadStartTime() {
-  String startTime = "";
-  for (int i = 0; i < 8; i++) {  // HH:MM:SS format has 8 characters
-    char c = EEPROM.read(EEPROM_STARTTIME_ADDR + i);
-    if (c == '\0') break;
-    startTime += c;
+  int loadDuration() {
+    int duration;
+    EEPROM.get(EEPROM_DURATION_ADDR, duration);
+    return duration;
   }
-  return startTime;
-}
 
-void saveDays(String days) {
-  for (int i = 0; i < days.length(); i++) {
-    EEPROM.write(EEPROM_DAYS_ADDR + i, days[i]);
+  void saveStartTime(String startTime) {
+    for (int i = 0; i < startTime.length(); i++) {
+      EEPROM.write(EEPROM_STARTTIME_ADDR + i, startTime[i]);
+    }
+    EEPROM.write(EEPROM_STARTTIME_ADDR + startTime.length(), '\0');
+    EEPROM.commit();
   }
-  EEPROM.write(EEPROM_DAYS_ADDR + days.length(), '\0');
-  EEPROM.commit();
-}
 
-String loadDays() {
-  String days = "";
-  for (int i = 0; i < EEPROM_MAX_DAYS_LENGTH; i++) {
-    char c = EEPROM.read(EEPROM_DAYS_ADDR + i);
-    if (c == '\0') break;
-    days += c;
+  String loadStartTime() {
+    String startTime = "";
+    for (int i = 0; i < 8; i++) {  // HH:MM:SS format has 8 characters
+      char c = EEPROM.read(EEPROM_STARTTIME_ADDR + i);
+      if (c == '\0') break;
+      startTime += c;
+    }
+    return startTime;
   }
-  return days;
+
+  void saveDays(String days) {
+    for (int i = 0; i < days.length(); i++) {
+      EEPROM.write(EEPROM_DAYS_ADDR + i, days[i]);
+    }
+    EEPROM.write(EEPROM_DAYS_ADDR + days.length(), '\0');
+    EEPROM.commit();
+  }
+
+  String loadDays() {
+    String days = "";
+    for (int i = 0; i < EEPROM_MAX_DAYS_LENGTH; i++) {
+      char c = EEPROM.read(EEPROM_DAYS_ADDR + i);
+      if (c == '\0') break;
+      days += c;
+    }
+    return days;
+  }
+
+
+  // Start server
+  AsyncElegantOTA.begin(&server);
+  server.begin();
 }
 
 
-// Start server
-AsyncElegantOTA.begin(&server);
-server.begin();
-}
-
-
-Void runSchedule() {
+void runSchedule() {
   // Read the duration and startTime values from the EEPROM
   String duration = String(EEPROM.read(EEPROM_DURATION_ADDRESS));
   String startTime = String(EEPROM.read(EEPROM_STARTTIME_ADDRESS));
@@ -603,40 +605,6 @@ void Zone4On() {
 void Zone4Off() {
   digitalWrite(relayAlarm4, HIGH);
 }
-
-// functions to be called when an alarm triggers:
-void Zone5On() {
-  digitalWrite(relayAlarm5, LOW);
-}
-
-void Zone5Off() {
-  digitalWrite(relayAlarm5, HIGH);
-}
-
-void Zone6On() {
-  digitalWrite(relayAlarm6, LOW);
-}
-
-void Zone6Off() {
-  digitalWrite(relayAlarm6, HIGH);
-}
-
-void Zone7On() {
-  digitalWrite(relayAlarm7, LOW);
-}
-
-void Zone7Off() {
-  digitalWrite(relayAlarm7, HIGH);
-}
-
-void Zone8On() {
-  digitalWrite(relayAlarm8, LOW);
-}
-
-void Zone8Off() {
-  digitalWrite(relayAlarm8, HIGH);
-}
-
 
 void UpdateNTP() {
   Serial.println("TimeNTP Example");
