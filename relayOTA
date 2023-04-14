@@ -8,6 +8,9 @@
 #include <Time.h>               //
 #include <WiFiUdp.h>
 #include <EEPROM.h>
+#include <vector>
+
+std::vector<int> selectedDays;
 
 const char UPLOAD_TIME[] = __DATE__ " " __TIME__;
 
@@ -97,8 +100,8 @@ const char index_html[] PROGMEM = R"rawliteral(
 <body>
   <h3>Irrigation Web Server</h3>
   <br>
-  Schedule runs for <input type="number" id="duration" min="1" value="20" step="1" style="width: 40px;"> minutes<br>
-  at <input type="time" id="startTime" value="16:00" style="width: 90px;"><br>
+  Schedule runs for <input type="number" id="duration" step="5" min="5" max="360" style="width: 40px;"> minutes<br>
+  at <input type="time" id="startTime" style="width: 90px;"><br>
   <label for="days">Select days to run schedule:</label>
 <select name="days" id="days" multiple>
   <option value="0">Sunday</option>
@@ -128,6 +131,24 @@ function toggleCheckbox(element) {
   if(element.checked){ xhr.open("GET", "/updates?relay="+element.id+"&state=1", true); }
   else { xhr.open("GET", "/updates?relay="+element.id+"&state=0", true); }
   xhr.send();
+}
+
+function loadSavedValues() {
+  const xhttp = new XMLHttpRequest();
+  xhttp.onreadystatechange = function() {
+    if (this.readyState == 4 && this.status == 200) {
+      // Parse the response as JSON
+      const savedValues = JSON.parse(this.responseText);
+
+      // Set the input values
+      document.getElementById("duration").value = savedValues.duration;
+      document.getElementById("startTime").value = savedValues.startTime;
+    }
+  };
+
+  // Send the request to fetch the saved values from your Arduino
+  xhttp.open("GET", "/getSavedValues", true);
+  xhttp.send();
 }
 
 function getSelectedDays() {
@@ -190,8 +211,46 @@ function requestScheduleState() {
   xhr.send();
 }
 
+function onScheduleSliderChange() {
+  // Check if the schedule slider is toggled on
+  const scheduleEnabled = document.getElementById("scheduleSlider").checked;
+
+  // Get the start time value
+  const startTime = document.getElementById("startTime").value;
+
+  // Get the duration value
+  const duration = document.getElementById("duration").value;
+
+  // Get the selected days of the week
+  const daysArray = [];
+  for (let i = 1; i <= 7; i++) {
+    const dayCheckbox = document.getElementById(`day${i}`);
+    if (dayCheckbox.checked) {
+      daysArray.push(i);
+    }
+  }
+  const days = daysArray.join(",");
+  
+// Send the values to the Arduino
+  const xhttp = new XMLHttpRequest();
+  xhttp.onreadystatechange = function() {
+    if (this.readyState == 4 && this.status == 200) {
+      // Handle the response, if necessary
+    }
+  };
+
+  // Prepare the URL with the values as query parameters
+  const url = `/schedule?enabled=${scheduleEnabled}&startTime=${startTime}&duration=${duration}&days=${days}`;
+
+  // Send the request
+  xhttp.open("GET", url, true);
+  xhttp.send();
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(requestScheduleState, 500);
+
+loadSavedValues();
 
 });
 </script>
@@ -350,38 +409,50 @@ void setup() {
 
   // Add the following route after the /updates route in the setup function
   server.on("/schedule", HTTP_GET, [](AsyncWebServerRequest* request) {
-    String state = request->arg("state");
-    String duration = request->arg("duration");
-    String startTime = request->arg("startTime");
-    String days = request->arg("days");
+    String scheduleEnabled, startTime, duration, days;
+    if (request->hasParam("enabled") && request->hasParam("startTime") && request->hasParam("duration") && request->hasParam("days")) {
+      scheduleEnabled = request->getParam("enabled")->value();
+      startTime = request->getParam("startTime")->value();
+      duration = request->getParam("duration")->value();
+      days = request->getParam("days")->value();
 
-    if (state != "") {
-      scheduleEnabled = state.toInt() == 1;
+      EEPROM.writeString(EEPROM_STARTTIME_ADDRESS, startTime);
+      EEPROM.writeString(EEPROM_DURATION_ADDRESS, duration);
+      EEPROM.writeString(EEPROM_DAYS_ADDRESS, days);
+      EEPROM.commit();
+
+      // Then, call the runSchedule function to update the schedule with the new values
+      if (scheduleEnabled == "1") {
+        runSchedule();
+      } else {
+        disableSchedule();
+      }
+
+
+      // Send a response back to the client
+      String response = "Schedule updated with the following values:\n";
+      response += "State: " + scheduleEnabled + "\n";  // Use scheduleEnabled instead of state
+      response += "Duration: " + duration + "\n";
+      response += "Start Time: " + startTime + "\n";
+      request->send(200, "text/plain", response);
     }
-
-    // You should store the duration and startTime values in the EEPROM or another persistent storage method
-    // Here's an example of storing the values in EEPROM (replace the addresses with the appropriate ones)
-    EEPROM.write(EEPROM_DURATION_ADDRESS, duration.toInt());
-    EEPROM.write(EEPROM_STARTTIME_ADDRESS, startTime.toInt());
-    EEPROM.writeString(EEPROM_DAYS_ADDRESS, days);
-    EEPROM.commit();
-
-    // Then, call the runSchedule function to update the schedule with the new values
-    runSchedule();
-
-    // Send a response back to the client
-    String response = "Schedule updated with the following values:\n";
-    response += "State: " + state + "\n";
-    response += "Duration: " + duration + "\n";
-    response += "Start Time: " + startTime + "\n";
-    request->send(200, "text/plain", response);
   });
+
 
   server.on("/getScheduleState", HTTP_GET, [](AsyncWebServerRequest* request) {
     Serial.print("Sending schedule state: ");
     Serial.println(scheduleEnabled);
     request->send(200, "text/plain", String(scheduleEnabled));
   });
+
+  server.on("/getSavedValues", HTTP_GET, [](AsyncWebServerRequest* request) {
+    String duration = String(EEPROM.read(EEPROM_DURATION_ADDRESS));
+    String startTime = String(EEPROM.read(EEPROM_STARTTIME_ADDRESS));
+
+    String jsonResponse = "{\"duration\":" + duration + ",\"startTime\":" + startTime + "}";
+    request->send(200, "application/json", jsonResponse);
+  });
+
 
   // Start server
   AsyncElegantOTA.begin(&server);
@@ -399,49 +470,48 @@ void runSchedule() {
   char daysArray[daysStr.length() + 1];
   daysStr.toCharArray(daysArray, daysStr.length() + 1);
 
-  // Tokenize the days string using ',' as a delimiter
-  char* token = strtok(daysArray, ",");
-  while (token != NULL) {
-    int day = atoi(token);
-    if (day >= 1 && day <= 7) {
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone1On);
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
-    }
-    token = strtok(NULL, ",");
-  }
-
   if (scheduleEnabled) {
     // Get duration and start time from input boxes
     int durationMinutes = duration.toInt();
     int testStartHour = startTime.toInt() / 60;
     int testStartMinute = startTime.toInt() % 60;
 
+    // Tokenize the days string using ',' as a delimiter
+    char* token = strtok(daysArray, ",");
+    while (token != NULL) {
+      int day = atoi(token);
+      if (day >= 1 && day <= 7) {
+        selectedDays.push_back(day);
+      }
+      token = strtok(NULL, ",");
+    }
+
     // Set alarms for each selected day
     for (int day : selectedDays) {
 
       //***************************** Zone 1 Schedule *****************************************************
-      Serial.println("Setting Schedule for Day: " + String(day));
-      // Daily test
-      Alarm.alarmRepeat(day, testStartHour, testStartMinute, 0, Zone1On);
-      Alarm.alarmRepeat(day, testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone1On);
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
+
+      testStartMinute += durationMinutes;
 
       //***************************** Zone 2 Schedule *****************************************************
-      // Daily test
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone2On);
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone2Off);
+
       testStartMinute += durationMinutes;
-      Alarm.alarmRepeat(testStartHour, testStartMinute, 0, Zone2On);
-      Alarm.alarmRepeat(testStartHour, testStartMinute + durationMinutes, 0, Zone2Off);
 
       //***************************** Zone 3 Schedule *****************************************************
-      // Daily test
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone3On);
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone3Off);
+
       testStartMinute += durationMinutes;
-      Alarm.alarmRepeat(testStartHour, testStartMinute, 0, Zone3On);
-      Alarm.alarmRepeat(testStartHour, testStartMinute + durationMinutes, 0, Zone3Off);
 
       //***************************** Zone 4 Schedule *****************************************************
-      // Daily test
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone4On);
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone4Off);
+
       testStartMinute += durationMinutes;
-      Alarm.alarmRepeat(testStartHour, testStartMinute, 0, Zone4On);
-      Alarm.alarmRepeat(testStartHour, testStartMinute + durationMinutes, 0, Zone4Off);
     }
     // You can add more zones by following the same pattern.
     // Just update the testStartMinute before setting the alarms for each zone.
@@ -453,6 +523,11 @@ void runSchedule() {
   time_t prevDisplay = 0;  // when the digital clock was displayed
 }
 
+void disableSchedule() {
+  for (int i = 0; i < dtNBR_ALARMS; i++) {
+    Alarm.disable(i);
+  }
+}
 
 void loop() {
   //digitalClockDisplay();
