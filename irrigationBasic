@@ -1,4 +1,30 @@
+/*
+Currently I am using the following code running on an esp32 programmed in the arduino ide to control a 4 zone irrigation system over the internet.
+ via the webpage hosted on the esp32 I am currently able to remotly turn and off the relays by toggling sliders on the page. I am using an NTP server to get the current time for the schedule. I would like to add 
+ some functionality and I would like you to look at the current code, and help implement new features by providing code to do so.I already do have some cade that 
+ preforms some of the functions but I am having difficulty getting it all to work together. Please look through the following list and let me know
+ how I can make each one work. I can supply the code I have a section at a time so we can figure out how to make it work.
+ 
+ - I want to run a schedule that is toggled on or off by a slider just like the others that I have to manually turn on the zones. When the slider is toggled on, a state (scheduleEnabled == "1") should be saved to eeprom 
+ so I can reload the page and have the settings persist. when the page loads on refresh it should check the stored state in eeprom for the current state of the slider and the 0 or 1. 
+ a runSchedule() function should run when the state is = 1 and not run if 0. 
+ when the state is set to 0 when the slider is toggled, it should run code to cancel the alarms. 
 
+ - I need to add an input box that allows me to enter a duration in minutes, another input box that has a time input that allows me to select the 
+ start time, and a multi selection drop down list that allows me to choose what days of the week I want the schedule to run. There can only be 1 zone on at at time, so 
+ the schedule must cycle through each one at a time. I will be adding more zones later so it should be easy to make additions.
+ 
+ - I will supply the duration, the start time and the days i want it to run, and then when I toggle the slider it should save those settings into eeprom and then feed them to the schedule 
+ function to run at the correct times on the right days for the set amount of time.
+ 
+ - When the slider is turned off the settings that were previously supplied should remain so it can be reapplied later.
+ 
+ Here is the link to the current code with the base functions. 
+ https://github.com/justinmdougherty/irrigation/blob/main/irrigationBasic
+ 
+ As I said earlier, I have code I can supply that can be modified or corrected to perform the functions. As we step through each item, ask what I already have and I will share it 
+ for you to figure out if we can use it or need to change it.
+ */
 
 // Import required libraries
 #include <TimeAlarms.h>         //
