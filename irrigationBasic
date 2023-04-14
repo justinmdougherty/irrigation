@@ -299,10 +299,11 @@ void setup() {
 
   bool scheduleEnabled = loadScheduleState();
 
-  if (scheduleEnabled) {
-    // Run the schedule
+  // Then, call the runSchedule function to update the schedule with the new values
+  if (scheduleEnabled == "1") {
+    runSchedule();
   } else {
-    // Cancel the schedule
+    disableSchedule();
   }
 
   pinMode(relayAlarm1, OUTPUT);
@@ -478,9 +479,73 @@ void setup() {
 }
 
 
-void runSchedule() {
+oid runSchedule() {
+  // Read the duration and startTime values from the EEPROM
+  String duration = String(EEPROM.read(EEPROM_DURATION_ADDRESS));
+  String startTime = String(EEPROM.read(EEPROM_STARTTIME_ADDRESS));
+
+  // Get the days string from EEPROM
+  String daysStr = EEPROM.readString(EEPROM_DAYS_ADDRESS);
+  char daysArray[daysStr.length() + 1];
+  daysStr.toCharArray(daysArray, daysStr.length() + 1);
+
+  if (scheduleEnabled) {
+    // Get duration and start time from input boxes
+    int durationMinutes = duration.toInt();
+    int testStartHour = startTime.toInt() / 60;
+    int testStartMinute = startTime.toInt() % 60;
+
+    // Tokenize the days string using ',' as a delimiter
+    char* token = strtok(daysArray, ",");
+    while (token != NULL) {
+      int day = atoi(token);
+      if (day >= 1 && day <= 7) {
+        selectedDays.push_back(day);
+      }
+      token = strtok(NULL, ",");
+    }
+
+    // Set alarms for each selected day
+    for (int day : selectedDays) {
+
+      //***************************** Zone 1 Schedule *****************************************************
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone1On);
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
+
+      testStartMinute += durationMinutes;
+
+      //***************************** Zone 2 Schedule *****************************************************
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone2On);
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone2Off);
+
+      testStartMinute += durationMinutes;
+
+      //***************************** Zone 3 Schedule *****************************************************
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone3On);
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone3Off);
+
+      testStartMinute += durationMinutes;
+
+      //***************************** Zone 4 Schedule *****************************************************
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone4On);
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone4Off);
+
+      testStartMinute += durationMinutes;
+    }
+    // You can add more zones by following the same pattern.
+    // Just update the testStartMinute before setting the alarms for each zone.
+
+  } else {
+    Serial.println("No Schedule to run");
+  }
 
   time_t prevDisplay = 0;  // when the digital clock was displayed
+}
+
+void disableSchedule() {
+  for (int i = 0; i < dtNBR_ALARMS; i++) {
+    Alarm.disable(i);
+  }
 }
 
 void saveScheduleState(bool state) {
