@@ -26,6 +26,8 @@ Currently I am using the following code running on an esp32 programmed in the ar
  for you to figure out if we can use it or need to change it.
  */
 
+
+
 // Import required libraries
 #include <TimeAlarms.h>         //
 #include <WiFi.h>               //
@@ -206,13 +208,17 @@ function getSelectedDays() {
 function toggleSchedule(element) {
   var xhr = new XMLHttpRequest();
   var requestedState = element.checked ? "1" : "0";
+  
   if (requestedState == "1") {
-  var duration = document.getElementById("duration").value;
-  var startTime = document.getElementById("startTime").value;
-  console.log("Duration:", duration, "minutes, Start time:", startTime);
-
-  // TODO: Send duration and startTime values to the server
+    var duration = document.getElementById("duration").value;
+    var startTime = document.getElementById("startTime").value;
+    console.log("Duration:", duration, "minutes, Start time:", startTime);
+    
+    xhr.open("GET", "/schedule?duration=" + duration + "&startTime=" + startTime + "&days=" + getSelectedDays().join(","), true);
+    xhr.send();
+  }
 }
+
    xhr.onreadystatechange = function() {
     if (xhr.readyState == 4 && xhr.status == 200) {
       console.log("Toggle schedule response: " + xhr.responseText);
@@ -333,6 +339,7 @@ String relayState(int numRelay) {
 }
 
 
+
 void saveScheduleState(bool state) {
   EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, state);
   EEPROM.commit();
@@ -353,6 +360,10 @@ void setup() {
   duration = EEPROM.readString(EEPROM_DURATION_ADDR);
   startTime = EEPROM.readString(EEPROM_STARTTIME_ADDR);
   daysArray = EEPROM.readString(EEPROM_DAYS_ADDR);
+
+  duration = loadDuration();
+  startTime = loadStartTime();
+  daysArray = loadDays();
 
   scheduleEnabled = loadScheduleState();
 
@@ -480,6 +491,24 @@ void setup() {
     } else {
       disableSchedule();
     }
+
+    // Add these lines to your server.on("/schedule", HTTP_GET, ...) route handler, after the if (request->hasParam("state")) {...} block
+    if (request->hasParam(PARAM_DURATION)) {
+      duration = request->getParam(PARAM_DURATION)->value().toInt();
+      saveDuration(duration);
+    }
+
+    if (request->hasParam(PARAM_START_TIME)) {
+      startTime = request->getParam(PARAM_START_TIME)->value();
+      saveStartTime(startTime);
+    }
+
+    if (request->hasParam(PARAM_DAYS)) {
+      daysArray = request->getParam(PARAM_DAYS)->value();
+      saveDays(daysArray);
+    }
+
+
     request->send(200, "text/plain", scheduleEnabled ? "1" : "0");
   });
 }
@@ -495,7 +524,7 @@ void saveDuration(int duration) {
 }
 
 int loadDuration() {
-  int duration;
+  String duration;
   EEPROM.get(EEPROM_DURATION_ADDR, duration);
   return duration;
 }
