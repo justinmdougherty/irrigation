@@ -27,12 +27,25 @@ const char UPLOAD_TIME[] = __DATE__ " " __TIME__;
 //#define relayAlarm8 4
 
 
+
+
+const char* PARAM_SCHEDULE_ENABLED = "enabled";
+const char* PARAM_DURATION = "duration";
+const char* PARAM_START_TIME = "start_time";
+const char* PARAM_DAYS = "days";
+
 const int EEPROM_SCHEDULE_STATE_ADDR = 0;
 const int EEPROM_DURATION_ADDR = 4;
 const int EEPROM_STARTTIME_ADDR = 8;
 const int EEPROM_DAYS_ADDR = 12;
 const int EEPROM_MAX_DAYS_LENGTH = 20;  // Assuming a maximum of 20 characters for the days string
 
+bool scheduleEnabled;
+String duration;
+String startTime;
+String daysArray;
+
+void saveScheduleState(bool state);
 
 
 void runSchedule();
@@ -83,6 +96,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
   <title>Irrigation</title>  
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="/favicon.ico" type="image/x-icon">
   <style>
     html {font-family: Arial; display: inline-block; text-align: center; color: white;}
     h2 {font-size: 3.0rem; text-align: center;}
@@ -165,7 +179,7 @@ function getSelectedDays() {
 
 function toggleSchedule(element) {
   var xhr = new XMLHttpRequest();
-  var requestedState = element.checked ? "1"
+  var requestedState = element.checked ? "1" : "0";
   if (requestedState == "1") {
   var duration = document.getElementById("duration").value;
   var startTime = document.getElementById("startTime").value;
@@ -292,6 +306,17 @@ String relayState(int numRelay) {
   return "";
 }
 
+
+void saveScheduleState(bool state) {
+  EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, state);
+  EEPROM.commit();
+}
+
+bool loadScheduleState() {
+  return EEPROM.read(EEPROM_SCHEDULE_STATE_ADDR);
+}
+
+
 void setup() {
   // Serial port for debugging purposes
   Serial.begin(115200);
@@ -303,7 +328,7 @@ void setup() {
   startTime = EEPROM.readString(EEPROM_STARTTIME_ADDR);
   daysArray = EEPROM.readString(EEPROM_DAYS_ADDR);
 
-  bool scheduleEnabled = loadScheduleState();
+  scheduleEnabled = loadScheduleState();
 
   pinMode(relayAlarm1, OUTPUT);
   pinMode(relayAlarm2, OUTPUT);
@@ -334,7 +359,9 @@ void setup() {
   time_t prevDisplay = 0;  // when the digital clock was displayed
 
 
-
+  // Start server
+  AsyncElegantOTA.begin(&server);
+  server.begin();
 
   // Set all relays to off when the program starts - if set to Normally Open (NO), the relay is off when you set the relay to HIGH
   for (int i = 1; i <= NUM_RELAYS; i++) {
@@ -360,7 +387,6 @@ void setup() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->send_P(200, "text/html", index_html, processor);
   });
-
 
   //Send a GET request to <ESP_IP>/update?relay=<inputMessage>&state=<inputMessage2>
   server.on("/updates", HTTP_GET, [](AsyncWebServerRequest* request) {
@@ -391,112 +417,108 @@ void setup() {
     request->send(200, "text/plain", "OK");
   });
 
-  server.on("/schedule", HTTP_GET, [](AsyncWebServerRequest* request) {
+  server.on("/schedule", HTTP_GET, [&](AsyncWebServerRequest* request) {
     String inputMessage;
+
     if (request->hasParam("state")) {
       String state = request->getParam("state")->value();
       scheduleEnabled = (state == "1");
       saveScheduleState(scheduleEnabled);
+    }
 
-      if (request->hasParam(PARAM_SCHEDULE_ENABLED)) {
-        scheduleEnabled = request->getParam(PARAM_SCHEDULE_ENABLED)->value().toInt();
-        EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, scheduleEnabled);
-        EEPROM.commit();
-      }
+    if (request->hasParam(PARAM_SCHEDULE_ENABLED)) {
+      scheduleEnabled = request->getParam(PARAM_SCHEDULE_ENABLED)->value().toInt();
+      EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, scheduleEnabled);
+      EEPROM.commit();
+    }
 
-      if (request->hasParam(PARAM_DURATION)) {
-        duration = request->getParam(PARAM_DURATION)->value();
-        EEPROM.writeString(EEPROM_DURATION_ADDR, duration);
-        EEPROM.commit();
-      }
+    if (request->hasParam(PARAM_DURATION)) {
+      duration = request->getParam(PARAM_DURATION)->value();
+      EEPROM.writeString(EEPROM_DURATION_ADDR, duration);
+      EEPROM.commit();
+    }
 
-      if (request->hasParam(PARAM_START_TIME)) {
-        startTime = request->getParam(PARAM_START_TIME)->value();
-        EEPROM.writeString(EEPROM_STARTTIME_ADDRESS, startTime);
-        EEPROM.commit();
-      }
+    if (request->hasParam(PARAM_START_TIME)) {
+      startTime = request->getParam(PARAM_START_TIME)->value();
+      EEPROM.writeString(EEPROM_STARTTIME_ADDR, startTime);
+      EEPROM.commit();
+    }
 
-      if (request->hasParam(PARAM_DAYS)) {
-        daysArray = request->getParam(PARAM_DAYS)->value();
-        EEPROM.writeString(EEPROM_DAYS_ADDRESS, daysArray);
-        EEPROM.commit();
-      }
+    if (request->hasParam(PARAM_DAYS)) {
+      daysArray = request->getParam(PARAM_DAYS)->value();
+      EEPROM.writeString(EEPROM_DAYS_ADDR, daysArray);
+      EEPROM.commit();
 
       runSchedule();
+
     } else {
       disableSchedule();
     }
-
     request->send(200, "text/plain", scheduleEnabled ? "1" : "0");
   });
-
-  void disableSchedule() {
-    for (int i = 0; i < dtNBR_ALARMS; i++) {
-      Alarm.disable(i);
-    }
-  }
-
-  void saveDuration(int duration) {
-    EEPROM.put(EEPROM_DURATION_ADDR, duration);
-    EEPROM.commit();
-  }
-
-  int loadDuration() {
-    int duration;
-    EEPROM.get(EEPROM_DURATION_ADDR, duration);
-    return duration;
-  }
-
-  void saveStartTime(String startTime) {
-    for (int i = 0; i < startTime.length(); i++) {
-      EEPROM.write(EEPROM_STARTTIME_ADDR + i, startTime[i]);
-    }
-    EEPROM.write(EEPROM_STARTTIME_ADDR + startTime.length(), '\0');
-    EEPROM.commit();
-  }
-
-  String loadStartTime() {
-    String startTime = "";
-    for (int i = 0; i < 8; i++) {  // HH:MM:SS format has 8 characters
-      char c = EEPROM.read(EEPROM_STARTTIME_ADDR + i);
-      if (c == '\0') break;
-      startTime += c;
-    }
-    return startTime;
-  }
-
-  void saveDays(String days) {
-    for (int i = 0; i < days.length(); i++) {
-      EEPROM.write(EEPROM_DAYS_ADDR + i, days[i]);
-    }
-    EEPROM.write(EEPROM_DAYS_ADDR + days.length(), '\0');
-    EEPROM.commit();
-  }
-
-  String loadDays() {
-    String days = "";
-    for (int i = 0; i < EEPROM_MAX_DAYS_LENGTH; i++) {
-      char c = EEPROM.read(EEPROM_DAYS_ADDR + i);
-      if (c == '\0') break;
-      days += c;
-    }
-    return days;
-  }
-
-
-  // Start server
-  AsyncElegantOTA.begin(&server);
-  server.begin();
 }
+void disableSchedule() {
+  for (int i = 0; i < dtNBR_ALARMS; i++) {
+    Alarm.disable(i);
+  }
+}
+
+void saveDuration(int duration) {
+  EEPROM.put(EEPROM_DURATION_ADDR, duration);
+  EEPROM.commit();
+}
+
+int loadDuration() {
+  int duration;
+  EEPROM.get(EEPROM_DURATION_ADDR, duration);
+  return duration;
+}
+
+void saveStartTime(String startTime) {
+  for (int i = 0; i < startTime.length(); i++) {
+    EEPROM.write(EEPROM_STARTTIME_ADDR + i, startTime[i]);
+  }
+  EEPROM.write(EEPROM_STARTTIME_ADDR + startTime.length(), '\0');
+  EEPROM.commit();
+}
+
+String loadStartTime() {
+  String startTime = "";
+  for (int i = 0; i < 8; i++) {  // HH:MM:SS format has 8 characters
+    char c = EEPROM.read(EEPROM_STARTTIME_ADDR + i);
+    if (c == '\0') break;
+    startTime += c;
+  }
+  return startTime;
+}
+
+void saveDays(String days) {
+  for (int i = 0; i < days.length(); i++) {
+    EEPROM.write(EEPROM_DAYS_ADDR + i, days[i]);
+  }
+  EEPROM.write(EEPROM_DAYS_ADDR + days.length(), '\0');
+  EEPROM.commit();
+}
+
+String loadDays() {
+  String days = "";
+  for (int i = 0; i < EEPROM_MAX_DAYS_LENGTH; i++) {
+    char c = EEPROM.read(EEPROM_DAYS_ADDR + i);
+    if (c == '\0') break;
+    days += c;
+  }
+  return days;
+}
+
 
 
 void runSchedule() {
   // Read the duration and startTime values from the EEPROM
-  String duration = String(EEPROM.read(EEPROM_DURATION_ADDRESS));
-  String startTime = String(EEPROM.read(EEPROM_STARTTIME_ADDRESS));
+  String duration = String(EEPROM.read(EEPROM_DURATION_ADDR));
+  String startTime = String(EEPROM.read(EEPROM_STARTTIME_ADDR));
 
   // Get the days string from EEPROM
-  String daysStr = EEPROM.readString(EEPROM_DAYS_ADDRESS);
+  String daysStr = EEPROM.readString(EEPROM_DAYS_ADDR);
   char daysArray[daysStr.length() + 1];
   daysStr.toCharArray(daysArray, daysStr.length() + 1);
 
@@ -552,21 +574,6 @@ void runSchedule() {
   }
 
   time_t prevDisplay = 0;  // when the digital clock was displayed
-}
-
-void disableSchedule() {
-  for (int i = 0; i < dtNBR_ALARMS; i++) {
-    Alarm.disable(i);
-  }
-}
-
-void saveScheduleState(bool state) {
-  EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, state);
-  EEPROM.commit();
-}
-
-bool loadScheduleState() {
-  return EEPROM.read(EEPROM_SCHEDULE_STATE_ADDR);
 }
 
 void loop() {
