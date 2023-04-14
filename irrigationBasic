@@ -44,11 +44,11 @@ unsigned int localPort = 8888;  // local port to listen for UDP packets
 #define RELAY_NO true
 
 // Set number of relays
-#define NUM_RELAYS 8
-//#define NUM_RELAYS 4
+//#define NUM_RELAYS 8
+#define NUM_RELAYS 4
 
 // Assign each GPIO to a relay
-//intrelayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25, 15, 2, 0, 4 };
+//int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25, 15, 2, 0, 4 };
 int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25 };
 
 // Replace with your network credentials
@@ -262,7 +262,7 @@ loadSavedValues();
 // Replaces placeholder with button section in your web page
 String processor(const String& var) {
   //Serial.println(var);
-  if (var == "BUTTONPLACEHOLDER1") {
+  if (var == "BUTTONPLACEHOLDER") {
     String buttons = "";
     for (int i = 1; i <= NUM_RELAYS; i++) {
       String relayStateValue = relayState(i);
@@ -295,16 +295,13 @@ void setup() {
   Serial.begin(115200);
 
   EEPROM.begin(512);
+  // Read saved values from EEPROM
   scheduleEnabled = EEPROM.read(EEPROM_SCHEDULE_STATE_ADDR);
+  duration = EEPROM.readString(EEPROM_DURATION_ADDRESS);
+  startTime = EEPROM.readString(EEPROM_STARTTIME_ADDRESS);
+  daysArray = EEPROM.readString(EEPROM_DAYS_ADDRESS);
 
   bool scheduleEnabled = loadScheduleState();
-
-  // Then, call the runSchedule function to update the schedule with the new values
-  if (scheduleEnabled == "1") {
-    runSchedule();
-  } else {
-    disableSchedule();
-  }
 
   pinMode(relayAlarm1, OUTPUT);
   pinMode(relayAlarm2, OUTPUT);
@@ -393,93 +390,105 @@ void setup() {
   });
 
   server.on("/schedule", HTTP_GET, [](AsyncWebServerRequest* request) {
+    String inputMessage;
     if (request->hasParam("state")) {
       String state = request->getParam("state")->value();
       scheduleEnabled = (state == "1");
       saveScheduleState(scheduleEnabled);
-
-      if (scheduleEnabled) {
-        // Save duration, start time, and days from the request parameters
-        if (request->hasParam("duration")) {
-          int duration = request->getParam("duration")->value().toInt();
-          saveDuration(duration);
-        }
-
-        if (request->hasParam("startTime")) {
-          String startTime = request->getParam("startTime")->value();
-          saveStartTime(startTime);
-        }
-
-        if (request->hasParam("days")) {
-          String days = request->getParam("days")->value();
-          saveDays(days);
-        }
-
-        // Run the schedule
-      } else {
-        // Cancel the schedule
+      
+      if (request->hasParam(PARAM_SCHEDULE_ENABLED)) {
+        scheduleEnabled = request->getParam(PARAM_SCHEDULE_ENABLED)->value().toInt();
+        EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, scheduleEnabled);
+        EEPROM.commit();
       }
+
+      if (request->hasParam(PARAM_DURATION)) {
+        duration = request->getParam(PARAM_DURATION)->value();
+        EEPROM.writeString(EEPROM_DURATION_ADDRESS, duration);
+        EEPROM.commit();
+      }
+
+      if (request->hasParam(PARAM_START_TIME)) {
+        startTime = request->getParam(PARAM_START_TIME)->value();
+        EEPROM.writeString(EEPROM_STARTTIME_ADDRESS, startTime);
+        EEPROM.commit();
+      }
+
+      if (request->hasParam(PARAM_DAYS)) {
+        daysArray = request->getParam(PARAM_DAYS)->value();
+        EEPROM.writeString(EEPROM_DAYS_ADDRESS, daysArray);
+        EEPROM.commit();
+      }
+
+      runSchedule();
+    } else {
+      disableSchedule();
+    }
     }
     request->send(200, "text/plain", scheduleEnabled ? "1" : "0");
-  });
+});
 
-
-
-  void saveDuration(int duration) {
-    EEPROM.put(EEPROM_DURATION_ADDR, duration);
-    EEPROM.commit();
+void disableSchedule() {
+  for (int i = 0; i < dtNBR_ALARMS; i++) {
+    Alarm.disable(i);
   }
+}
 
-  int loadDuration() {
-    int duration;
-    EEPROM.get(EEPROM_DURATION_ADDR, duration);
-    return duration;
+void saveDuration(int duration) {
+  EEPROM.put(EEPROM_DURATION_ADDR, duration);
+  EEPROM.commit();
+}
+
+int loadDuration() {
+  int duration;
+  EEPROM.get(EEPROM_DURATION_ADDR, duration);
+  return duration;
+}
+
+void saveStartTime(String startTime) {
+  for (int i = 0; i < startTime.length(); i++) {
+    EEPROM.write(EEPROM_STARTTIME_ADDR + i, startTime[i]);
   }
+  EEPROM.write(EEPROM_STARTTIME_ADDR + startTime.length(), '\0');
+  EEPROM.commit();
+}
 
-  void saveStartTime(String startTime) {
-    for (int i = 0; i < startTime.length(); i++) {
-      EEPROM.write(EEPROM_STARTTIME_ADDR + i, startTime[i]);
-    }
-    EEPROM.write(EEPROM_STARTTIME_ADDR + startTime.length(), '\0');
-    EEPROM.commit();
+String loadStartTime() {
+  String startTime = "";
+  for (int i = 0; i < 8; i++) {  // HH:MM:SS format has 8 characters
+    char c = EEPROM.read(EEPROM_STARTTIME_ADDR + i);
+    if (c == '\0') break;
+    startTime += c;
   }
+  return startTime;
+}
 
-  String loadStartTime() {
-    String startTime = "";
-    for (int i = 0; i < 8; i++) {  // HH:MM:SS format has 8 characters
-      char c = EEPROM.read(EEPROM_STARTTIME_ADDR + i);
-      if (c == '\0') break;
-      startTime += c;
-    }
-    return startTime;
+void saveDays(String days) {
+  for (int i = 0; i < days.length(); i++) {
+    EEPROM.write(EEPROM_DAYS_ADDR + i, days[i]);
   }
+  EEPROM.write(EEPROM_DAYS_ADDR + days.length(), '\0');
+  EEPROM.commit();
+}
 
-  void saveDays(String days) {
-    for (int i = 0; i < days.length(); i++) {
-      EEPROM.write(EEPROM_DAYS_ADDR + i, days[i]);
-    }
-    EEPROM.write(EEPROM_DAYS_ADDR + days.length(), '\0');
-    EEPROM.commit();
+String loadDays() {
+  String days = "";
+  for (int i = 0; i < EEPROM_MAX_DAYS_LENGTH; i++) {
+    char c = EEPROM.read(EEPROM_DAYS_ADDR + i);
+    if (c == '\0') break;
+    days += c;
   }
-
-  String loadDays() {
-    String days = "";
-    for (int i = 0; i < EEPROM_MAX_DAYS_LENGTH; i++) {
-      char c = EEPROM.read(EEPROM_DAYS_ADDR + i);
-      if (c == '\0') break;
-      days += c;
-    }
-    return days;
-  }
-
-
-  // Start server
-  AsyncElegantOTA.begin(&server);
-  server.begin();
+  return days;
 }
 
 
-oid runSchedule() {
+// Start server
+AsyncElegantOTA.begin(&server);
+server.begin();
+}
+
+
+Void runSchedule() {
   // Read the duration and startTime values from the EEPROM
   String duration = String(EEPROM.read(EEPROM_DURATION_ADDRESS));
   String startTime = String(EEPROM.read(EEPROM_STARTTIME_ADDRESS));
@@ -490,6 +499,7 @@ oid runSchedule() {
   daysStr.toCharArray(daysArray, daysStr.length() + 1);
 
   if (scheduleEnabled) {
+    Serial.println("Schedule enables.");
     // Get duration and start time from input boxes
     int durationMinutes = duration.toInt();
     int testStartHour = startTime.toInt() / 60;
@@ -558,7 +568,6 @@ bool loadScheduleState() {
 }
 
 void loop() {
-  digitalClockDisplay();
   Alarm.delay(1000);
 }
 
