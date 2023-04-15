@@ -626,7 +626,7 @@ void runSchedule() {
 
 
 void loop() {
-  Alarm.delay(1000);
+  Alarm.delay(0);
 }
 
 // functions to be called when an alarm triggers:
