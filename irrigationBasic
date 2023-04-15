@@ -445,19 +445,31 @@ void setup() {
     String inputMessage2;
     String inputParam2;
 
-    //GET input1 value on <ESP_IP>/update?relay=<inputMessage>
+    // GET input1 value on <ESP_IP>/update?relay=<inputMessage>&state=<inputMessage2>
     if (request->hasParam(PARAM_INPUT_1) & request->hasParam(PARAM_INPUT_2)) {
       inputMessage = request->getParam(PARAM_INPUT_1)->value();
       inputParam = PARAM_INPUT_1;
       inputMessage2 = request->getParam(PARAM_INPUT_2)->value();
       inputParam2 = PARAM_INPUT_2;
+
+      int relayIndex = inputMessage.toInt() - 1;
       if (RELAY_NO) {
         Serial.print("NO ");
-        digitalWrite(relayGPIOs[inputMessage.toInt() - 1], !inputMessage2.toInt());
-
+        digitalWrite(relayGPIOs[relayIndex], !inputMessage2.toInt());
       } else {
         Serial.print("NC ");
-        digitalWrite(relayGPIOs[inputMessage.toInt() - 1], inputMessage2.toInt());
+        digitalWrite(relayGPIOs[relayIndex], inputMessage2.toInt());
+      }
+
+      // Check if the zone is manually toggled on and set a timer to turn it off after the duration
+      if (inputMessage2.toInt() == 1) {
+        Alarm.timerOnce(duration * 60, [&]() {
+          if (RELAY_NO) {
+            digitalWrite(relayGPIOs[relayIndex], HIGH);
+          } else {
+            digitalWrite(relayGPIOs[relayIndex], LOW);
+          }
+        });
       }
     } else {
       inputMessage = "No message sent";
@@ -466,6 +478,7 @@ void setup() {
     Serial.println(inputMessage + inputMessage2);
     request->send(200, "text/plain", "OK");
   });
+
 
   //Checks the scheduleEnabled state, then gets the time, durateion and days for the schedule
   server.on("/schedule", HTTP_GET, [&](AsyncWebServerRequest* request) {
