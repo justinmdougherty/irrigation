@@ -29,13 +29,13 @@ Currently I am using the following code running on an esp32 programmed in the ar
 
 
 // Import required libraries
-#include <TimeAlarms.h>         //
-#include <WiFi.h>               //
-#include <AsyncTCP.h>           //
-#include <ESPAsyncWebServer.h>  //
-#include <AsyncElegantOTA.h>    //
-#include <TimeLib.h>            //
-#include <Time.h>               //
+#include <TimeAlarms.h>
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncElegantOTA.h>
+#include <TimeLib.h>
+#include <Time.h>
 #include <WiFiUdp.h>
 #include <EEPROM.h>
 #include <vector>
@@ -45,40 +45,30 @@ std::vector<int> selectedDays;
 //Used for "Time of last update"
 const char UPLOAD_TIME[] = __DATE__ " " __TIME__;
 
-#define relayAlarm1 27
-#define relayAlarm2 33
-#define relayAlarm3 26
-#define relayAlarm4 25
-//#define relayAlarm5 15
-//#define relayAlarm6 2
-//#define relayAlarm7 0
-//#define relayAlarm8 4
-
-
-
-
-const char* PARAM_SCHEDULE_ENABLED = "enabled";
 const char* PARAM_DURATION = "duration";
-const char* PARAM_START_TIME = "start_time";
+const char* PARAM_START_TIME = "startTime";
 const char* PARAM_DAYS = "days";
+const int EEPROM_DURATION_ADDR = 6;
+const int EEPROM_STARTTIME_ADDR = 10;
+const int EEPROM_DAYS_ADDR = 20;
 
-const int EEPROM_SCHEDULE_STATE_ADDR = 0;
-const int EEPROM_DURATION_ADDR = 4;
-const int EEPROM_STARTTIME_ADDR = 8;
-const int EEPROM_DAYS_ADDR = 12;
-const int EEPROM_MAX_DAYS_LENGTH = 20;  // Assuming a maximum of 20 characters for the days string
-
-bool scheduleEnabled;
 String duration;
 String startTime;
 String daysArray;
 
+const int EEPROM_MAX_DAYS_LENGTH = 20;  // Assuming a maximum of 20 characters for the days string
+const int EEPROM_SCHEDULE_STATE_ADDR = 0;
+
+bool scheduleEnabled;
 void saveScheduleState(bool state);
-
-
 void runSchedule();
 void digitalClockDisplay();
 
+//Define relay pins
+#define relayAlarm1 27
+#define relayAlarm2 33
+#define relayAlarm3 26
+#define relayAlarm4 25
 
 WiFiUDP Udp;
 unsigned int localPort = 8888;  // local port to listen for UDP packets
@@ -143,7 +133,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <body>
   <h3>Irrigation Web Server</h3>
   <br>
-  Schedule runs for <input type="number" id="duration" step="5" min="5" max="360" style="width: 40px;"> minutes<br>
+  Schedule runs for <input type="number" id="duration" step="1" min="1" max="360" style="width: 40px;"> minutes<br>
   at <input type="time" id="startTime" style="width: 90px;"><br>
   <label for="days">Select days to run schedule:</label>
   <select name="days" id="days" multiple>
@@ -155,6 +145,8 @@ const char index_html[] PROGMEM = R"rawliteral(
   <option value="5">Friday</option>
   <option value="6">Saturday</option>
   </select><br>
+  <button onclick="saveSettings()">Save Settings</button>
+  <br>
   <a href="/update">Update</a>
   
  <h3>Schedule On/Off</h3>
@@ -167,6 +159,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 %BUTTONPLACEHOLDER% <br>
 <br>
 Last Updated: %UPLOADTIME%
+
 
 <script>
 function toggleCheckbox(element) {
@@ -186,12 +179,55 @@ function loadSavedValues() {
       // Set the input values
       document.getElementById("duration").value = savedValues.duration;
       document.getElementById("startTime").value = savedValues.startTime;
+
+      // Set the selected days
+      const savedDays = savedValues.days.split(',').map(Number);
+      const daysSelect = document.getElementById('days');
+      for (let i = 0; i < daysSelect.options.length; i++) {
+        if (savedDays.includes(Number(daysSelect.options[i].value))) {
+          daysSelect.options[i].selected = true;
+        } else {
+          daysSelect.options[i].selected = false;
+        }
+      }
     }
   };
 
   // Send the request to fetch the saved values from your Arduino
   xhttp.open("GET", "/getSavedValues", true);
   xhttp.send();
+}
+
+
+function toggleSchedule(element) {
+  var xhr = new XMLHttpRequest();
+  var requestedState = element.checked ? "1" : "0";
+  
+  if (requestedState == "1") {
+    var duration = document.getElementById("duration").value;
+    var startTime = document.getElementById("startTime").value;
+    var days = getSelectedDays().join(",");
+    console.log("Duration:", duration, "minutes, Start time:", startTime, "Days:", days);
+    
+    xhr.open("GET", "/schedule?state=" + requestedState + "&duration=" + duration + "&startTime=" + startTime + "&days=" + days, true);
+  } else {
+    xhr.open("GET", "/schedule?state=" + requestedState, true);
+  }
+
+  xhr.onreadystatechange = function() {
+    if (xhr.readyState == 4 && xhr.status == 200) {
+      if (xhr.responseText != "OK") {
+        console.error("Error saving settings:", xhr.responseText);
+      }
+    }
+  };
+  xhr.send();
+  setTimeout(requestScheduleState, 100);
+}
+
+function updateScheduleState(scheduleState) {
+  document.getElementById("schedule").checked = scheduleState;
+  document.getElementById("scheduleStateText").innerHTML = scheduleState ? "Schedule on" : "Schedule Off";
 }
 
 function getSelectedDays() {
@@ -204,45 +240,6 @@ function getSelectedDays() {
   }
   return selectedDays;
 }
-
-function toggleSchedule(element) {
-  var xhr = new XMLHttpRequest();
-  var requestedState = element.checked ? "1" : "0";
-  
-  if (requestedState == "1") {
-    var duration = document.getElementById("duration").value;
-    var startTime = document.getElementById("startTime").value;
-    console.log("Duration:", duration, "minutes, Start time:", startTime);
-    
-    xhr.open("GET", "/schedule?duration=" + duration + "&startTime=" + startTime + "&days=" + getSelectedDays().join(","), true);
-    xhr.send();
-  }
-}
-
-   xhr.onreadystatechange = function() {
-    if (xhr.readyState == 4 && xhr.status == 200) {
-      console.log("Toggle schedule response: " + xhr.responseText);
-      var scheduleState = xhr.responseText == "1";
-      console.log("Parsed schedule state:", scheduleState);
-      if (requestedState != xhr.responseText) {
-        element.checked = scheduleState;
-        document.getElementById("scheduleStateText").innerHTML = scheduleState ? "Schedule ON" : "Schedule OFF";
-      }
-    }
-  }
-  var url = "/schedule?state=" + requestedState;
-  console.log("Sending request to:", url);
-  xhr.open("GET", url, true);
-  xhr.send();
-  setTimeout(requestScheduleState, 100);
-
-}
-
-function updateScheduleState(scheduleState) {
-  document.getElementById("schedule").checked = scheduleState;
-  document.getElementById("scheduleStateText").innerHTML = scheduleState ? "Schedule ON" : "Schedule OFF";
-}
-
 
 function requestScheduleState() {
   var xhr = new XMLHttpRequest();
@@ -258,17 +255,33 @@ function requestScheduleState() {
   xhr.send();
 }
 
+function saveSettings() {
+  const duration = document.getElementById('duration').value;
+  const startTime = document.getElementById('startTime').value;
+  const days = Array.from(document.getElementById('days').selectedOptions).map(option => option.value);
+
+  const queryParams = new URLSearchParams({
+    duration: duration,
+    startTime: startTime,
+    days: days.join(',')
+  });
+
+  fetch('/save-settings?' + queryParams.toString())
+    .then(response => response.text())
+    .then(data => {
+      // Handle the response data here
+      console.log("Save settings response:", data);
+      alert("Settings saved");
+    })
+    .catch(error => {
+      console.error("Error saving settings:", error);
+    });
+}
+
 function onScheduleSliderChange() {
-  // Check if the schedule slider is toggled on
   const scheduleEnabled = document.getElementById("scheduleSlider").checked;
-
-  // Get the start time value
   const startTime = document.getElementById("startTime").value;
-
-  // Get the duration value
   const duration = document.getElementById("duration").value;
-
-  // Get the selected days of the week
   const daysArray = [];
   for (let i = 1; i <= 7; i++) {
     const dayCheckbox = document.getElementById(`day${i}`);
@@ -277,12 +290,20 @@ function onScheduleSliderChange() {
     }
   }
   const days = daysArray.join(",");
-  
-// Send the values to the Arduino
+
+  applyScheduleSettings(scheduleEnabled, startTime, duration, days);
+}
+
+function applyScheduleSettings(scheduleEnabled, startTime, duration, days) {
   const xhttp = new XMLHttpRequest();
   xhttp.onreadystatechange = function() {
     if (this.readyState == 4 && this.status == 200) {
-      // Handle the response, if necessary
+      if (this.responseText !== "OK") {
+        console.error("Error saving settings:", this.responseText);
+        console.log("Request URL:", this.responseURL);
+        console.log("Request status:", this.status);
+        console.log("Request response text:", this.responseText);
+      }
     }
   };
 
@@ -294,18 +315,22 @@ function onScheduleSliderChange() {
   xhttp.send();
 }
 
+
+
 document.addEventListener('DOMContentLoaded', function() {
   setTimeout(requestScheduleState, 500);
-
-loadSavedValues();
-
-});
+  loadSavedValues();
+});  
 </script>
+  
 
 
 </body>
 </html>
 )rawliteral";
+
+
+
 
 // Replaces placeholder with button section in your web page
 String processor(const String& var) {
@@ -338,6 +363,52 @@ String relayState(int numRelay) {
   return "";
 }
 
+void saveDuration(int duration) {
+  EEPROM.put(EEPROM_DURATION_ADDR, duration);
+  EEPROM.commit();
+}
+
+int loadDuration() {
+  int duration;
+  EEPROM.get(EEPROM_DURATION_ADDR, duration);
+  return duration;
+}
+
+void saveStartTime(String startTime) {
+  for (int i = 0; i < startTime.length(); i++) {
+    EEPROM.write(EEPROM_STARTTIME_ADDR + i, startTime[i]);
+  }
+  EEPROM.write(EEPROM_STARTTIME_ADDR + startTime.length(), '\0');
+  EEPROM.commit();
+}
+
+String loadStartTime() {
+  String startTime = "";
+  for (int i = 0; i < 8; i++) {  // HH:MM:SS format has 8 characters
+    char c = EEPROM.read(EEPROM_STARTTIME_ADDR + i);
+    if (c == '\0') break;
+    startTime += c;
+  }
+  return startTime;
+}
+
+void saveDays(String days) {
+  for (int i = 0; i < days.length(); i++) {
+    EEPROM.write(EEPROM_DAYS_ADDR + i, days[i]);
+  }
+  EEPROM.write(EEPROM_DAYS_ADDR + days.length(), '\0');
+  EEPROM.commit();
+}
+
+String loadDays() {
+  String days = "";
+  for (int i = 0; i < 14; i++) {  // Max 14 characters in "0,1,2,3,4,5,6"
+    char c = EEPROM.read(EEPROM_DAYS_ADDR + i);
+    if (c == '\0') break;
+    days += c;
+  }
+  return days;
+}
 
 
 void saveScheduleState(bool state) {
@@ -355,50 +426,31 @@ void setup() {
   Serial.begin(115200);
 
   EEPROM.begin(512);
-  // Read saved values from EEPROM
-  scheduleEnabled = EEPROM.read(EEPROM_SCHEDULE_STATE_ADDR);
-  duration = EEPROM.readString(EEPROM_DURATION_ADDR);
-  startTime = EEPROM.readString(EEPROM_STARTTIME_ADDR);
-  daysArray = EEPROM.readString(EEPROM_DAYS_ADDR);
-
+  scheduleEnabled = loadScheduleState();
   duration = loadDuration();
   startTime = loadStartTime();
   daysArray = loadDays();
-
-  scheduleEnabled = loadScheduleState();
 
   pinMode(relayAlarm1, OUTPUT);
   pinMode(relayAlarm2, OUTPUT);
   pinMode(relayAlarm3, OUTPUT);
   pinMode(relayAlarm4, OUTPUT);
-  //pinMode(relayAlarm5, OUTPUT);
-  //pinMode(relayAlarm7, OUTPUT);
-  //pinMode(relayAlarm7, OUTPUT);
-  //pinMode(relayAlarm8, OUTPUT);
 
   digitalWrite(relayAlarm1, HIGH);
   digitalWrite(relayAlarm2, HIGH);
   digitalWrite(relayAlarm3, HIGH);
   digitalWrite(relayAlarm4, HIGH);
-  //digitalWrite(relayAlarm5, HIGH);
-  //digitalWrite(relayAlarm6, HIGH);
-  //digitalWrite(relayAlarm7, HIGH);
-  //digitalWrite(relayAlarm8, HIGH);
 
   UpdateNTP();
 
-  runSchedule();  // Add this line to call the runSchedule function
+  runSchedule();
 
   Serial.println("Setting Alarms...");
 
   Alarm.alarmRepeat(0, 0, 1, UpdateNTP);
 
-  time_t prevDisplay = 0;  // when the digital clock was displayed
+  time_t prevDisplay = 0;
 
-
-  // Start server
-  AsyncElegantOTA.begin(&server);
-  server.begin();
 
   // Set all relays to off when the program starts - if set to Normally Open (NO), the relay is off when you set the relay to HIGH
   for (int i = 1; i <= NUM_RELAYS; i++) {
@@ -454,6 +506,7 @@ void setup() {
     request->send(200, "text/plain", "OK");
   });
 
+  //Checks the scheduleEnabled state, then gets the time, durateion and days for the schedule
   server.on("/schedule", HTTP_GET, [&](AsyncWebServerRequest* request) {
     String inputMessage;
 
@@ -463,38 +516,8 @@ void setup() {
       saveScheduleState(scheduleEnabled);
     }
 
-    if (request->hasParam(PARAM_SCHEDULE_ENABLED)) {
-      scheduleEnabled = request->getParam(PARAM_SCHEDULE_ENABLED)->value().toInt();
-      EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, scheduleEnabled);
-      EEPROM.commit();
-    }
-
     if (request->hasParam(PARAM_DURATION)) {
-      duration = request->getParam(PARAM_DURATION)->value();
-      EEPROM.writeString(EEPROM_DURATION_ADDR, duration);
-      EEPROM.commit();
-    }
-
-    if (request->hasParam(PARAM_START_TIME)) {
-      startTime = request->getParam(PARAM_START_TIME)->value();
-      EEPROM.writeString(EEPROM_STARTTIME_ADDR, startTime);
-      EEPROM.commit();
-    }
-
-    if (request->hasParam(PARAM_DAYS)) {
-      daysArray = request->getParam(PARAM_DAYS)->value();
-      EEPROM.writeString(EEPROM_DAYS_ADDR, daysArray);
-      EEPROM.commit();
-
-      runSchedule();
-
-    } else {
-      disableSchedule();
-    }
-
-    // Add these lines to your server.on("/schedule", HTTP_GET, ...) route handler, after the if (request->hasParam("state")) {...} block
-    if (request->hasParam(PARAM_DURATION)) {
-      duration = request->getParam(PARAM_DURATION)->value().toInt();
+      int duration = request->getParam(PARAM_DURATION)->value().toInt();
       saveDuration(duration);
     }
 
@@ -508,77 +531,72 @@ void setup() {
       saveDays(daysArray);
     }
 
-
+    if (scheduleEnabled) {
+      runSchedule();
+    } else {
+      for (int i = 0; i < dtNBR_ALARMS; i++) {
+        Alarm.disable(i);
+      }
+    }
     request->send(200, "text/plain", scheduleEnabled ? "1" : "0");
   });
-}
-void disableSchedule() {
-  for (int i = 0; i < dtNBR_ALARMS; i++) {
-    Alarm.disable(i);
+
+  server.on("/getSavedValues", HTTP_GET, [](AsyncWebServerRequest* request) {
+    String json = "{";
+    json += "\"duration\":" + String(loadDuration()) + ",";
+    json += "\"startTime\":\"" + loadStartTime() + "\",";
+    json += "\"days\":\"" + loadDays() + "\"";
+    json += "}";
+    request->send(200, "application/json", json);
+  });
+
+  server.on("/getScheduleState", HTTP_GET, [](AsyncWebServerRequest* request) {
+    bool scheduleState = loadScheduleState();
+    request->send(200, "text/plain", scheduleState ? "1" : "0");
+  });
+
+  server.on("/save-settings", HTTP_GET, [](AsyncWebServerRequest* request) {
+  if (request->hasParam(PARAM_DURATION)) {
+    int duration = request->getParam(PARAM_DURATION)->value().toInt();
+    saveDuration(duration);
   }
-}
 
-void saveDuration(int duration) {
-  EEPROM.put(EEPROM_DURATION_ADDR, duration);
-  EEPROM.commit();
-}
-
-int loadDuration() {
-  String duration;
-  EEPROM.get(EEPROM_DURATION_ADDR, duration);
-  return duration;
-}
-
-void saveStartTime(String startTime) {
-  for (int i = 0; i < startTime.length(); i++) {
-    EEPROM.write(EEPROM_STARTTIME_ADDR + i, startTime[i]);
+  if (request->hasParam(PARAM_START_TIME)) {
+    String startTime = request->getParam(PARAM_START_TIME)->value();
+    saveStartTime(startTime);
   }
-  EEPROM.write(EEPROM_STARTTIME_ADDR + startTime.length(), '\0');
-  EEPROM.commit();
-}
 
-String loadStartTime() {
-  String startTime = "";
-  for (int i = 0; i < 8; i++) {  // HH:MM:SS format has 8 characters
-    char c = EEPROM.read(EEPROM_STARTTIME_ADDR + i);
-    if (c == '\0') break;
-    startTime += c;
+  if (request->hasParam(PARAM_DAYS)) {
+    String daysArray = request->getParam(PARAM_DAYS)->value();
+    saveDays(daysArray);
   }
-  return startTime;
-}
 
-void saveDays(String days) {
-  for (int i = 0; i < days.length(); i++) {
-    EEPROM.write(EEPROM_DAYS_ADDR + i, days[i]);
-  }
-  EEPROM.write(EEPROM_DAYS_ADDR + days.length(), '\0');
-  EEPROM.commit();
-}
+  request->send(200, "text/plain", "OK");
+});
 
-String loadDays() {
-  String days = "";
-  for (int i = 0; i < EEPROM_MAX_DAYS_LENGTH; i++) {
-    char c = EEPROM.read(EEPROM_DAYS_ADDR + i);
-    if (c == '\0') break;
-    days += c;
-  }
-  return days;
+
+
+  AsyncElegantOTA.begin(&server);
+  server.begin();
 }
 
 
-
+//Runs the schedule that is set via the web interface
 void runSchedule() {
+  // Clear previously selected days
+  selectedDays.clear();
+
   // Read the duration and startTime values from the EEPROM
-  String duration = String(EEPROM.read(EEPROM_DURATION_ADDR));
-  String startTime = String(EEPROM.read(EEPROM_STARTTIME_ADDR));
+  duration = loadDuration();
+  startTime = loadStartTime();
 
   // Get the days string from EEPROM
-  String daysStr = EEPROM.readString(EEPROM_DAYS_ADDR);
+  String daysStr = loadDays();
   char daysArray[daysStr.length() + 1];
   daysStr.toCharArray(daysArray, daysStr.length() + 1);
 
   if (scheduleEnabled) {
-    Serial.println("Schedule enables.");
+    Serial.println("Schedule enabled.");
     // Get duration and start time from input boxes
     int durationMinutes = duration.toInt();
     int testStartHour = startTime.toInt() / 60;
@@ -596,6 +614,7 @@ void runSchedule() {
 
     // Set alarms for each selected day
     for (int day : selectedDays) {
+      int originalStartMinute = testStartMinute;
 
       //***************************** Zone 1 Schedule *****************************************************
       Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone1On);
@@ -619,7 +638,7 @@ void runSchedule() {
       Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone4On);
       Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone4Off);
 
-      testStartMinute += durationMinutes;
+      testStartMinute = originalStartMinute;
     }
     // You can add more zones by following the same pattern.
     // Just update the testStartMinute before setting the alarms for each zone.
@@ -630,6 +649,8 @@ void runSchedule() {
 
   time_t prevDisplay = 0;  // when the digital clock was displayed
 }
+
+
 
 void loop() {
   Alarm.delay(1000);
