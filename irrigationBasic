@@ -21,6 +21,7 @@ const char* PARAM_DAYS = "days";
 const int EEPROM_DURATION_ADDR = 6;
 const int EEPROM_STARTTIME_ADDR = 10;
 const int EEPROM_DAYS_ADDR = 20;
+int relayIndexToTurnOff;
 
 String duration;
 String startTime;
@@ -115,7 +116,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   <option value="5">Friday</option>
   <option value="6">Saturday</option>
   </select><br>
-  <button id="saveButton" onclick="onSaveButtonClick()">Save Settings</button>
+  <button id="saveButton" onclick="saveSettings()">Save Settings</button>
   <br>
   <a href="/update">Update</a>
   
@@ -140,7 +141,7 @@ function toggleCheckbox(element) {
 }
 
 function onSaveButtonClick() {
-  const scheduleEnabled = document.getElementById("scheduleSlider").checked;
+  const scheduleEnabled = document.getElementById("schedule").checked;
   const startTime = document.getElementById("startTime").value;
   const duration = document.getElementById("duration").value;
   const days = getSelectedDays();
@@ -154,7 +155,7 @@ function loadSavedValues() {
   xhttp.onreadystatechange = function() {
     if (this.readyState == 4 && this.status == 200) {
       const response = JSON.parse(this.responseText);
-      document.getElementById("scheduleSlider").checked = response.enabled;
+      document.getElementById("schedule").checked = response.enabled;
       document.getElementById("startTime").value = response.startTime;
       document.getElementById("duration").value = response.duration;
 
@@ -173,6 +174,9 @@ function loadSavedValues() {
 function toggleSchedule(element) {
   var xhr = new XMLHttpRequest();
   var requestedState = element.checked ? "1" : "0";
+
+  // Call updateScheduleState function to update the scheduleStateText
+  updateScheduleState(element.checked)
   
   if (requestedState == "1") {
     var duration = document.getElementById("duration").value;
@@ -188,7 +192,7 @@ function toggleSchedule(element) {
   xhr.onreadystatechange = function() {
     if (xhr.readyState == 4 && xhr.status == 200) {
       if (xhr.responseText != "OK") {
-        console.error("Error saving settings:", xhr.responseText);
+        console.error("Error saving settings:", xhr.responseText, "Status:", xhr.status);
       }
     }
   };
@@ -395,6 +399,9 @@ void turnOffRelay(int relayIndex) {
   }
 }
 
+void turnOffRelayWithIndex() {
+  turnOffRelay(relayIndexToTurnOff);
+}
 
 void setup() {
   // Serial port for debugging purposes
@@ -477,7 +484,8 @@ void setup() {
       // Check if the zone is manually toggled on and set a timer to turn it off after the duration
       if (inputMessage2.toInt() == 1) {
         int durationInt = duration.toInt();
-        Alarm.timerOnce(durationInt * 60, turnOffRelay, relayIndex);
+        relayIndexToTurnOff = relayIndex;
+        Alarm.timerOnce(durationInt * 60, turnOffRelayWithIndex);
       }
     } else {
       inputMessage = "No message sent";
@@ -487,16 +495,13 @@ void setup() {
     request->send(200, "text/plain", "OK");
   });
 
-
-
-
   //Checks the scheduleEnabled state, then gets the time, durateion and days for the schedule
   server.on("/schedule", HTTP_GET, [&](AsyncWebServerRequest* request) {
     String inputMessage;
 
-    if (request->hasParam("enabled")) {
+    if (request->hasParam("state")) {
       String scheduleEnabledStr = request->getParam("enabled")->value();
-      scheduleEnabled = (scheduleEnabledStr == "true");
+      scheduleEnabled = (scheduleEnabledStr == "1");
       saveScheduleState(scheduleEnabled);
     }
 
