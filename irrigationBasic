@@ -27,6 +27,8 @@ const int EEPROM_DAYS_ADDR = 20;
 const int EEPROM_MAX_DAYS_LENGTH = 20;  // Assuming a maximum of 20 characters for the days string
 const int EEPROM_SCHEDULE_STATE_ADDR = 0;
 int relayIndexToTurnOff;
+int lastSyncDay = -1;
+
 
 String duration;
 String startTime;
@@ -52,9 +54,13 @@ unsigned int localPort = 8888;  // local port to listen for UDP packets
 int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25 };
 
 
+
 typedef void (*callback_t)(uint8_t);
-callback_t zoneOnCallbacks[NUM_RELAYS] = { zoneOn, zoneOn, zoneOn, zoneOn };
-callback_t zoneOffCallbacks[NUM_RELAYS] = { zoneOff, zoneOff, zoneOff, zoneOff };
+void zoneOn(uint8_t zone);
+void zoneOff(uint8_t zone);
+callback_t zoneOnCallbacks[NUM_RELAYS] = {zoneOn, zoneOn, zoneOn, zoneOn};
+callback_t zoneOffCallbacks[NUM_RELAYS] = {zoneOff, zoneOff, zoneOff, zoneOff};
+
 
 
 
@@ -650,6 +656,16 @@ void runSchedule() {
 
 void loop() {
   Alarm.delay(500);
+
+  time_t currentTime = now();
+  tmElements_t tm;
+  breakTime(currentTime, tm);
+
+  if (tm.Hour == 0 && tm.Minute == 0 && tm.Second == 0 && lastSyncDay != tm.Day) {
+    dailyNtpSync();
+    lastSyncDay = tm.Day;
+  }
+
 
   if (scheduleUpdated) {
     runSchedule();
