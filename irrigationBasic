@@ -106,19 +106,20 @@ const char index_html[] PROGMEM = R"rawliteral(
   <br>
   Schedule runs for <input type="number" id="duration" step="1" min="1" max="360" style="width: 40px;"> minutes<br>
   at <input type="time" id="startTime" style="width: 90px;"><br>
-  <label for="days">Select days to run schedule:</label>
-  <select name="days" id="days" multiple>
-  <option value="0">Sunday</option>
-  <option value="1">Monday</option>
-  <option value="2">Tuesday</option>
-  <option value="3">Wednesday</option>
-  <option value="4">Thursday</option>
-  <option value="5">Friday</option>
-  <option value="6">Saturday</option>
-  </select><br>
+<label for="days">Select days to run schedule:</label>
+<select name="days" id="days" multiple>
+  <option value="1">Sunday</option>
+  <option value="2">Monday</option>
+  <option value="3">Tuesday</option>
+  <option value="4">Wednesday</option>
+  <option value="5">Thursday</option>
+  <option value="6">Friday</option>
+  <option value="7">Saturday</option>
+</select>
+<br>
   <button id="saveButton" onclick="saveSettings()">Save Settings</button>
   <br>
-  <a href="/update">Update</a>
+  
   
  <h3>Schedule On/Off</h3>
 <label class="switch">
@@ -129,7 +130,8 @@ const char index_html[] PROGMEM = R"rawliteral(
 
 %BUTTONPLACEHOLDER% <br>
 <br>
-Last Updated: %UPLOADTIME%
+<p>Last Updated: %UPLOADTIME%<p>
+<a href="/update">OTA Update</a>
 
 
 <script>
@@ -140,14 +142,23 @@ function toggleCheckbox(element) {
   xhr.send();
 }
 
-function onSaveButtonClick() {
-  const scheduleEnabled = document.getElementById("schedule").checked;
-  const startTime = document.getElementById("startTime").value;
-  const duration = document.getElementById("duration").value;
-  const days = getSelectedDays();
+  fetch('/save-settings?' + queryParams.toString())
+    .then(response => response.text())
+    .then(data => {
+      // Handle the response data here
+      console.log("Save settings response:", data);
+      console.log("Duration:", duration, "minutes, Start time:", startTime);
 
-  applyScheduleSettings(scheduleEnabled, startTime, duration, days);
-}
+      const scheduleEnabled = document.getElementById("schedule").checked;
+      if (scheduleEnabled) {
+        applyScheduleSettings(scheduleEnabled, startTime, duration, days.join(','));
+      }
+
+      alert("Settings saved");
+    })
+    .catch(error => {
+      console.error("Error saving settings:", error);
+    });
 
 
 function loadSavedValues() {
@@ -174,35 +185,30 @@ function loadSavedValues() {
 function toggleSchedule(element) {
   var xhr = new XMLHttpRequest();
   var requestedState = element.checked ? "1" : "0";
-
-  // Call updateScheduleState function to update the scheduleStateText
-  updateScheduleState(element.checked)
   
-  if (requestedState == "1") {
-    var duration = document.getElementById("duration").value;
-    var startTime = document.getElementById("startTime").value;
-    var days = getSelectedDays().join(",");
-    console.log("Duration:", duration, "minutes, Start time:", startTime, "Days:", days);
-    
-    xhr.open("GET", "/schedule?state=" + requestedState + "&duration=" + duration + "&startTime=" + startTime + "&days=" + days, true);
-  } else {
-    xhr.open("GET", "/schedule?state=" + requestedState, true);
-  }
-
   xhr.onreadystatechange = function() {
     if (xhr.readyState == 4 && xhr.status == 200) {
-      if (xhr.responseText != "OK") {
-        console.error("Error saving settings:", xhr.responseText, "Status:", xhr.status);
+      console.log("Toggle schedule response: " + xhr.responseText);
+      var scheduleState = xhr.responseText == "1";
+      console.log("Parsed schedule state:", scheduleState);
+      if (requestedState != xhr.responseText) {
+        updateScheduleState(scheduleState);
       }
     }
-  };
+  }
+  var url = "/schedule?state=" + requestedState;
+  console.log("Sending request to:", url);
+  xhr.open("GET", url, true);
   xhr.send();
   setTimeout(requestScheduleState, 100);
 }
 
 function updateScheduleState(scheduleState) {
-  document.getElementById("schedule").checked = scheduleState;
-  document.getElementById("scheduleStateText").innerHTML = scheduleState ? "Schedule on" : "Schedule Off";
+  var scheduleElement = document.getElementById("schedule");
+  var scheduleStateText = document.getElementById("scheduleStateText");
+
+  scheduleElement.checked = scheduleState;
+  scheduleStateText.innerHTML = scheduleState ? "Schedule ON" : "Schedule OFF";
 }
 
 function getSelectedDays() {
@@ -266,7 +272,7 @@ function onScheduleSliderChange() {
   }
   const days = daysArray.join(",");
 
-  applyScheduleSettings(requestedState === "1", startTime, duration, getSelectedDays().join(","));
+  // paste applyschedule settings here
 }
 
 function applyScheduleSettings(scheduleEnabled, startTime, duration, days) {
@@ -391,17 +397,16 @@ bool loadScheduleState() {
   return EEPROM.read(EEPROM_SCHEDULE_STATE_ADDR);
 }
 
-void turnOffRelay(int relayIndex) {
+void turnOffRelayWithIndex() {
+  Serial.print("Turning off relay at index ");
+  Serial.println(relayIndexToTurnOff);
   if (RELAY_NO) {
-    digitalWrite(relayGPIOs[relayIndex], HIGH);
+    digitalWrite(relayGPIOs[relayIndexToTurnOff], HIGH);
   } else {
-    digitalWrite(relayGPIOs[relayIndex], LOW);
+    digitalWrite(relayGPIOs[relayIndexToTurnOff], LOW);
   }
 }
 
-void turnOffRelayWithIndex() {
-  turnOffRelay(relayIndexToTurnOff);
-}
 
 void setup() {
   // Serial port for debugging purposes
@@ -484,9 +489,12 @@ void setup() {
       // Check if the zone is manually toggled on and set a timer to turn it off after the duration
       if (inputMessage2.toInt() == 1) {
         int durationInt = duration.toInt();
+        Serial.print("Duration: ");
+        Serial.println(durationInt);
         relayIndexToTurnOff = relayIndex;
         Alarm.timerOnce(durationInt * 60, turnOffRelayWithIndex);
       }
+
     } else {
       inputMessage = "No message sent";
       inputParam = "none";
@@ -500,7 +508,7 @@ void setup() {
     String inputMessage;
 
     if (request->hasParam("state")) {
-      String scheduleEnabledStr = request->getParam("enabled")->value();
+      String scheduleEnabledStr = request->getParam("state")->value();
       scheduleEnabled = (scheduleEnabledStr == "1");
       saveScheduleState(scheduleEnabled);
     }
@@ -563,6 +571,20 @@ void setup() {
     request->send(200, "text/plain", "OK");
   });
 
+  server.on("/getStartTime", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send(200, "text/plain", loadStartTime());
+  });
+
+  server.on("/getDuration", HTTP_GET, [](AsyncWebServerRequest* request) {
+    int durationInt = loadDuration();
+    request->send(200, "text/plain", String(durationInt));
+  });
+
+
+  server.on("/getDays", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send(200, "text/plain", loadDays());
+  });
+
 
 
   AsyncElegantOTA.begin(&server);
@@ -605,8 +627,11 @@ void runSchedule() {
       int originalStartMinute = testStartMinute;
 
       //***************************** Zone 1 Schedule *****************************************************
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone1On);
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
+      Alarm.alarmRepeat(testStartHour, testStartMinute, 0, Zone1On);
+      Alarm.alarmRepeat(testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
+
+      //Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone1On);
+      //Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
 
       testStartMinute += durationMinutes;
 
@@ -641,7 +666,7 @@ void runSchedule() {
 
 
 void loop() {
-  Alarm.delay(0);
+  Alarm.delay(1000);
 }
 
 // functions to be called when an alarm triggers:
