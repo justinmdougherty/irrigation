@@ -639,32 +639,14 @@ void runSchedule() {
     for (int day : selectedDays) {
       int originalStartMinute = testStartMinute;
 
-      //***************************** Zone 1 Schedule *****************************************************
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone1On);
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
-
-      testStartMinute += durationMinutes;
-
-      //***************************** Zone 2 Schedule *****************************************************
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone2On);
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone2Off);
-
-      testStartMinute += durationMinutes;
-
-      //***************************** Zone 3 Schedule *****************************************************
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone3On);
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone3Off);
-
-      testStartMinute += durationMinutes;
-
-      //***************************** Zone 4 Schedule *****************************************************
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone4On);
-      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone4Off);
-
-      testStartMinute = originalStartMinute;
+      //*****************************Run Schedule for all activated zones*****************************
+      for (int zone = 0; zone < NUM_RELAYS; zone++) {
+        Alarm.alarmRepeat(dow_t(day), testStartHour, testStartMinute, 0, zoneOnCallbacks[zone]);
+        testStartMinute += durationMinutes;  // Shift the start time for the next zone
+        Alarm.alarmRepeat(dow_t(day), testStartHour, testStartMinute, 0, zoneOffCallbacks[zone]);
+        testStartMinute += 1;  // Add a 1-minute gap between zones
+      }
     }
-    // You can add more zones by following the same pattern.
-    // Just update the testStartMinute before setting the alarms for each zone.
   } else {
     Serial.println("No Schedule to run");
   }
@@ -680,6 +662,18 @@ void loop() {
 }
 
 // functions to be called when an alarm triggers:
+
+void setZone(int zone, bool state) {
+  if (zone >= 0 && zone < NUM_RELAYS) {
+    Serial.print("Zone ");
+    Serial.print(zone + 1);
+    Serial.println(state ? " On" : " Off");
+    digitalWrite(relayGPIOs[zone], state ? LOW : HIGH);
+    digitalClockDisplay();
+  } else {
+    Serial.println("Invalid zone number");
+  }
+}
 
 
 void UpdateNTP() {
@@ -717,19 +711,6 @@ void digitalClockDisplay() {
   Serial.print(year());
   Serial.println();
 }
-
-void setZone(int zone, bool state) {
-  if (zone >= 0 && zone < numZones) {
-    Serial.print("Zone ");
-    Serial.print(zone + 1);
-    Serial.println(state ? " On" : " Off");
-    digitalWrite(relayGPIOs[zone], state ? LOW : HIGH);
-    digitalClockDisplay();
-  } else {
-    Serial.println("Invalid zone number");
-  }
-}
-
 
 void printDigits(int digits) {
   // utility for digital clock display: prints preceding colon and leading 0
