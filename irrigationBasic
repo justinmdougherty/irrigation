@@ -36,12 +36,6 @@ void saveScheduleState(bool state);
 void runSchedule();
 void digitalClockDisplay();
 
-//Define relay pins
-#define relayAlarm1 27
-#define relayAlarm2 33
-#define relayAlarm3 26
-#define relayAlarm4 25
-
 WiFiUDP Udp;
 unsigned int localPort = 8888;  // local port to listen for UDP packets
 
@@ -418,16 +412,6 @@ void setup() {
   startTime = loadStartTime();
   daysArray = loadDays();
 
-  pinMode(relayAlarm1, OUTPUT);
-  pinMode(relayAlarm2, OUTPUT);
-  pinMode(relayAlarm3, OUTPUT);
-  pinMode(relayAlarm4, OUTPUT);
-
-  digitalWrite(relayAlarm1, HIGH);
-  digitalWrite(relayAlarm2, HIGH);
-  digitalWrite(relayAlarm3, HIGH);
-  digitalWrite(relayAlarm4, HIGH);
-
   UpdateNTP();
   runSchedule();
   Alarm.alarmRepeat(0, 0, 1, dailyNtpSync);
@@ -696,53 +680,7 @@ void loop() {
 }
 
 // functions to be called when an alarm triggers:
-void Zone1On() {
-  Serial.println("Zone 1 On");
-  digitalWrite(relayAlarm1, LOW);
-  digitalClockDisplay();
-}
 
-void Zone1Off() {
-  Serial.println("Zone 1 Off");
-  digitalWrite(relayAlarm1, HIGH);
-  digitalClockDisplay();
-}
-
-void Zone2On() {
-  Serial.println("Zone 2 On");
-  digitalWrite(relayAlarm2, LOW);
-  digitalClockDisplay();
-}
-
-void Zone2Off() {
-  Serial.println("Zone 2 Off");
-  digitalWrite(relayAlarm2, HIGH);
-  digitalClockDisplay();
-}
-
-void Zone3On() {
-  Serial.println("Zone 3 On");
-  digitalWrite(relayAlarm3, LOW);
-  digitalClockDisplay();
-}
-
-void Zone3Off() {
-  Serial.println("Zone 3 Off");
-  digitalWrite(relayAlarm3, HIGH);
-  digitalClockDisplay();
-}
-
-void Zone4On() {
-  Serial.println("Zone 4 On");
-  digitalWrite(relayAlarm4, LOW);
-  digitalClockDisplay();
-}
-
-void Zone4Off() {
-  Serial.println("Zone 4 Off");
-  digitalWrite(relayAlarm4, HIGH);
-  digitalClockDisplay();
-}
 
 void UpdateNTP() {
   Serial.println("TimeNTP Example");
@@ -780,6 +718,17 @@ void digitalClockDisplay() {
   Serial.println();
 }
 
+void setZone(int zone, bool state) {
+  if (zone >= 0 && zone < numZones) {
+    Serial.print("Zone ");
+    Serial.print(zone + 1);
+    Serial.println(state ? " On" : " Off");
+    digitalWrite(relayGPIOs[zone], state ? LOW : HIGH);
+    digitalClockDisplay();
+  } else {
+    Serial.println("Invalid zone number");
+  }
+}
 
 
 void printDigits(int digits) {
