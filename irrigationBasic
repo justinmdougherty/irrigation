@@ -31,6 +31,7 @@ const int EEPROM_MAX_DAYS_LENGTH = 20;  // Assuming a maximum of 20 characters f
 const int EEPROM_SCHEDULE_STATE_ADDR = 0;
 
 bool scheduleEnabled;
+bool scheduleUpdated = false;
 void saveScheduleState(bool state);
 void runSchedule();
 void digitalClockDisplay();
@@ -108,13 +109,13 @@ const char index_html[] PROGMEM = R"rawliteral(
   at <input type="time" id="startTime" style="width: 90px;"><br>
 <label for="days">Select days to run schedule:</label>
 <select name="days" id="days" multiple>
-  <option value="1">Sunday</option>
-  <option value="2">Monday</option>
-  <option value="3">Tuesday</option>
-  <option value="4">Wednesday</option>
-  <option value="5">Thursday</option>
-  <option value="6">Friday</option>
-  <option value="7">Saturday</option>
+  <option value="7">Sunday</option>
+  <option value="1">Monday</option>
+  <option value="2">Tuesday</option>
+  <option value="3">Wednesday</option>
+  <option value="4">Thursday</option>
+  <option value="5">Friday</option>
+  <option value="6">Saturday</option>
 </select>
 <br>
   <button id="saveButton" onclick="saveSettings()">Save Settings</button>
@@ -141,25 +142,6 @@ function toggleCheckbox(element) {
   else { xhr.open("GET", "/updates?relay="+element.id+"&state=0", true); }
   xhr.send();
 }
-
-  fetch('/save-settings?' + queryParams.toString())
-    .then(response => response.text())
-    .then(data => {
-      // Handle the response data here
-      console.log("Save settings response:", data);
-      console.log("Duration:", duration, "minutes, Start time:", startTime);
-
-      const scheduleEnabled = document.getElementById("schedule").checked;
-      if (scheduleEnabled) {
-        applyScheduleSettings(scheduleEnabled, startTime, duration, days.join(','));
-      }
-
-      alert("Settings saved");
-    })
-    .catch(error => {
-      console.error("Error saving settings:", error);
-    });
-
 
 function loadSavedValues() {
   const xhttp = new XMLHttpRequest();
@@ -241,9 +223,18 @@ function saveSettings() {
   const startTime = document.getElementById('startTime').value;
   const days = Array.from(document.getElementById('days').selectedOptions).map(option => option.value);
 
+  // Convert the start time to 24-hour format
+  let [startHour, startMinute] = startTime.split(':').map(Number);
+  if (startHour === 12) {
+    startHour = 0;
+  } else if (startHour < 12 && isPm(startTime)) {
+    startHour += 12;
+  }
+  const startTime24 = `${startHour.toString().padStart(2, '0')}:${startMinute.toString().padStart(2, '0')}`;
+
   const queryParams = new URLSearchParams({
     duration: duration,
-    startTime: startTime,
+    startTime: startTime24,
     days: days.join(',')
   });
 
@@ -252,7 +243,10 @@ function saveSettings() {
     .then(data => {
       // Handle the response data here
       console.log("Save settings response:", data);
-      alert("Settings saved");
+
+      const currentTime = new Date().toLocaleTimeString();
+      const savedSettingsMessage = `Settings saved at ${currentTime}\nDuration: ${duration} minutes\nStart time: ${startTime}\nDays: ${days.join(', ')}`;
+      alert(savedSettingsMessage);
     })
     .catch(error => {
       console.error("Error saving settings:", error);
@@ -338,6 +332,8 @@ String relayState(int numRelay) {
 void saveDuration(int duration) {
   EEPROM.put(EEPROM_DURATION_ADDR, duration);
   EEPROM.commit();
+  Serial.print("Saved duration: ");
+  Serial.println(duration);
 }
 
 int loadDuration() {
@@ -346,12 +342,16 @@ int loadDuration() {
   return duration;
 }
 
-void saveStartTime(String startTime) {
-  for (int i = 0; i < startTime.length(); i++) {
-    EEPROM.write(EEPROM_STARTTIME_ADDR + i, startTime[i]);
+void saveStartTime(String _startTime) {
+  for (uint i = 0; i < _startTime.length(); ++i) {
+    EEPROM.write(EEPROM_STARTTIME_ADDR + i, _startTime[i]);
   }
-  EEPROM.write(EEPROM_STARTTIME_ADDR + startTime.length(), '\0');
+  EEPROM.write(EEPROM_STARTTIME_ADDR + _startTime.length(), '\0');
   EEPROM.commit();
+  Serial.print("Saved start time: ");
+  Serial.println(_startTime);
+  Serial.print("Current time: ");
+  digitalClockDisplay();
 }
 
 String loadStartTime() {
@@ -370,6 +370,8 @@ void saveDays(String days) {
   }
   EEPROM.write(EEPROM_DAYS_ADDR + days.length(), '\0');
   EEPROM.commit();
+  Serial.print("Saved days: ");
+  Serial.println(days);
 }
 
 String loadDays() {
@@ -385,12 +387,11 @@ String loadDays() {
   return daysStr;
 }
 
-
-
-
 void saveScheduleState(bool state) {
   EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, state);
   EEPROM.commit();
+  Serial.print("Schedule state:");
+  Serial.println(state);
 }
 
 bool loadScheduleState() {
@@ -406,7 +407,6 @@ void turnOffRelayWithIndex() {
     digitalWrite(relayGPIOs[relayIndexToTurnOff], LOW);
   }
 }
-
 
 void setup() {
   // Serial port for debugging purposes
@@ -429,15 +429,8 @@ void setup() {
   digitalWrite(relayAlarm4, HIGH);
 
   UpdateNTP();
-
   runSchedule();
-
-  Serial.println("Setting Alarms...");
-
-  Alarm.alarmRepeat(0, 0, 1, UpdateNTP);
-
-  time_t prevDisplay = 0;
-
+  Alarm.alarmRepeat(0, 0, 1, dailyNtpSync);
 
   // Set all relays to off when the program starts - if set to Normally Open (NO), the relay is off when you set the relay to HIGH
   for (int i = 1; i <= NUM_RELAYS; i++) {
@@ -568,12 +561,30 @@ void setup() {
       saveDays(daysArray);
     }
 
+    // Set scheduleUpdated flag to true
+    scheduleUpdated = true;
+    Serial.println("Setting Alarms...");
+
     request->send(200, "text/plain", "OK");
   });
 
+
   server.on("/getStartTime", HTTP_GET, [](AsyncWebServerRequest* request) {
-    request->send(200, "text/plain", loadStartTime());
+    String startTime = loadStartTime();
+    int colonIndex = startTime.indexOf(':');
+    int startHour = startTime.substring(0, colonIndex).toInt();
+    int startMinute = startTime.substring(colonIndex + 1).toInt();
+
+    if (startHour == 0) {
+      startHour = 12;
+    }
+
+    char startTimeBuf[6];
+    snprintf(startTimeBuf, sizeof(startTimeBuf), "%02d:%02d", startHour, startMinute);
+
+    request->send(200, "text/plain", startTimeBuf);
   });
+
 
   server.on("/getDuration", HTTP_GET, [](AsyncWebServerRequest* request) {
     int durationInt = loadDuration();
@@ -584,8 +595,6 @@ void setup() {
   server.on("/getDays", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->send(200, "text/plain", loadDays());
   });
-
-
 
   AsyncElegantOTA.begin(&server);
   server.begin();
@@ -607,10 +616,23 @@ void runSchedule() {
 
   if (scheduleEnabled) {
     Serial.println("Schedule enabled.");
+    // Rest of the schedule enabled code
+
     // Get duration and start time from input boxes
     int durationMinutes = duration.toInt();
-    int testStartHour = startTime.toInt() / 60;
-    int testStartMinute = startTime.toInt() % 60;
+    int colonIndex = startTime.indexOf(':');
+    int testStartHour = startTime.substring(0, colonIndex).toInt();
+    int testStartMinute = startTime.substring(colonIndex + 1).toInt();
+
+    Serial.print("Duration: ");
+    Serial.print(durationMinutes);
+    Serial.print(" minutes, Start time: ");
+    Serial.print(testStartHour);
+    Serial.print(":");
+    Serial.println(testStartMinute);
+    Serial.print("Schedule set at: ");
+    digitalClockDisplay();
+
 
     // Tokenize the days string using ',' as a delimiter
     char* token = strtok(daysArray, ",");
@@ -622,16 +644,20 @@ void runSchedule() {
       token = strtok(NULL, ",");
     }
 
+    Serial.print("Selected days: ");
+    for (int day : selectedDays) {
+      Serial.print(day);
+      Serial.print(" ");
+    }
+    Serial.println();
+
     // Set alarms for each selected day
     for (int day : selectedDays) {
       int originalStartMinute = testStartMinute;
 
       //***************************** Zone 1 Schedule *****************************************************
-      Alarm.alarmRepeat(testStartHour, testStartMinute, 0, Zone1On);
-      Alarm.alarmRepeat(testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
-
-      //Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone1On);
-      //Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone1On);
+      Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
 
       testStartMinute += durationMinutes;
 
@@ -655,51 +681,67 @@ void runSchedule() {
     }
     // You can add more zones by following the same pattern.
     // Just update the testStartMinute before setting the alarms for each zone.
-
   } else {
     Serial.println("No Schedule to run");
   }
-
-  time_t prevDisplay = 0;  // when the digital clock was displayed
 }
 
-
-
 void loop() {
-  Alarm.delay(1000);
+  Alarm.delay(500);
+
+  if (scheduleUpdated) {
+    runSchedule();
+    scheduleUpdated = false;
+  }
 }
 
 // functions to be called when an alarm triggers:
 void Zone1On() {
+  Serial.println("Zone 1 On");
   digitalWrite(relayAlarm1, LOW);
+  digitalClockDisplay();
 }
 
 void Zone1Off() {
+  Serial.println("Zone 1 Off");
   digitalWrite(relayAlarm1, HIGH);
+  digitalClockDisplay();
 }
 
 void Zone2On() {
+  Serial.println("Zone 2 On");
   digitalWrite(relayAlarm2, LOW);
+  digitalClockDisplay();
 }
 
 void Zone2Off() {
+  Serial.println("Zone 2 Off");
   digitalWrite(relayAlarm2, HIGH);
+  digitalClockDisplay();
 }
 
 void Zone3On() {
+  Serial.println("Zone 3 On");
   digitalWrite(relayAlarm3, LOW);
+  digitalClockDisplay();
 }
 
 void Zone3Off() {
+  Serial.println("Zone 3 Off");
   digitalWrite(relayAlarm3, HIGH);
+  digitalClockDisplay();
 }
 
 void Zone4On() {
+  Serial.println("Zone 4 On");
   digitalWrite(relayAlarm4, LOW);
+  digitalClockDisplay();
 }
 
 void Zone4Off() {
+  Serial.println("Zone 4 Off");
   digitalWrite(relayAlarm4, HIGH);
+  digitalClockDisplay();
 }
 
 void UpdateNTP() {
@@ -730,10 +772,10 @@ void digitalClockDisplay() {
   printDigits(minute());
   printDigits(second());
   Serial.print(" ");
-  Serial.print(day());
-  Serial.print(".");
   Serial.print(month());
-  Serial.print(".");
+  Serial.print("/");
+  Serial.print(day());
+  Serial.print("/");
   Serial.print(year());
   Serial.println();
 }
@@ -749,6 +791,17 @@ void printDigits(int digits) {
 }
 
 /*-------- NTP code ----------*/
+
+void dailyNtpSync() {
+  time_t currentTime = getNtpTime();
+  if (currentTime != 0) {
+    setTime(currentTime);
+    Serial.println("Daily NTP synchronization completed.");
+  } else {
+    Serial.println("Daily NTP synchronization failed.");
+  }
+}
+
 
 const int NTP_PACKET_SIZE = 48;      // NTP time is in the first 48 bytes of message
 byte packetBuffer[NTP_PACKET_SIZE];  //buffer to hold incoming & outgoing packets
