@@ -36,6 +36,7 @@ String daysArray;
 
 bool scheduleEnabled;
 bool scheduleUpdated = false;
+bool ntpInProgress = false;
 void saveScheduleState(bool state);
 void runSchedule();
 void digitalClockDisplay();
@@ -58,8 +59,8 @@ int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25 };
 typedef void (*callback_t)(uint8_t);
 void zoneOn(uint8_t zone);
 void zoneOff(uint8_t zone);
-callback_t zoneOnCallbacks[NUM_RELAYS] = {zoneOn, zoneOn, zoneOn, zoneOn};
-callback_t zoneOffCallbacks[NUM_RELAYS] = {zoneOff, zoneOff, zoneOff, zoneOff};
+callback_t zoneOnCallbacks[NUM_RELAYS] = { zoneOn, zoneOn, zoneOn, zoneOn };
+callback_t zoneOffCallbacks[NUM_RELAYS] = { zoneOff, zoneOff, zoneOff, zoneOff };
 
 
 
@@ -655,35 +656,44 @@ void runSchedule() {
 }
 
 void loop() {
-  Alarm.delay(500);
+  time_t t = now();
+  digitalClockDisplay(t);
 
-  time_t currentTime = now();
-  tmElements_t tm;
-  breakTime(currentTime, tm);
-
-  if (tm.Hour == 0 && tm.Minute == 0 && tm.Second == 0 && lastSyncDay != tm.Day) {
+  // Daily NTP sync
+  if (hour(t) == 0 && minute(t) == 0 && second(t) <= 10 && !ntpSynced) {
     dailyNtpSync();
-    lastSyncDay = tm.Day;
+    ntpSynced = true;
+  } else if (hour(t) != 0) {
+    ntpSynced = false;
   }
 
+  // Check if NTP is not in progress before running the timer
+  if (!ntpInProgress) {
+    for (uint8_t i = 0; i < NUM_RELAYS; i++) {
+      if (relayStates[i]) {
+        if (now() >= relayOffTimes[i]) {
+          zoneOff(i);
+        }
+      }
+    }
+  }
 
-  if (scheduleUpdated) {
-    runSchedule();
-    scheduleUpdated = false;
+  // Check for new commands from the server
+  if (millis() - lastCommandCheck >= COMMAND_CHECK_INTERVAL) {
+    checkForCommand();
+    lastCommandCheck = millis();
   }
 }
 
 // functions to be called when an alarm triggers:
 
-void setZone(int zone, bool state) {
-  if (zone >= 0 && zone < NUM_RELAYS) {
-    Serial.print("Zone ");
-    Serial.print(zone + 1);
-    Serial.println(state ? " On" : " Off");
-    digitalWrite(relayGPIOs[zone], state ? LOW : HIGH);
-    digitalClockDisplay();
-  } else {
-    Serial.println("Invalid zone number");
+void setZone(uint8_t zone, bool state) {
+  if (zone < NUM_RELAYS) {
+    if (state) {
+      zoneOnCallbacks[zone](zone);
+    } else {
+      zoneOffCallbacks[zone](zone);
+    }
   }
 }
 
@@ -701,6 +711,15 @@ void zoneOff(uint8_t zone) {
   Serial.println(" Off");
   digitalWrite(relayGPIOs[zone], HIGH);
   digitalClockDisplay();
+}
+
+void setZoneByAlias(uint8_t alias, bool state) {
+  for (uint8_t i = 0; i < NUM_RELAYS; i++) {
+    if (remoteZones[i] == alias) {
+      setZone(i, state);
+      break;
+    }
+  }
 }
 
 
@@ -765,6 +784,7 @@ const int NTP_PACKET_SIZE = 48;      // NTP time is in the first 48 bytes of mes
 byte packetBuffer[NTP_PACKET_SIZE];  //buffer to hold incoming & outgoing packets
 
 time_t getNtpTime() {
+  ntpInProgress = true; // Add this line
   while (Udp.parsePacket() > 0)
     ;  // discard any previously received packets
   Serial.println("Transmit NTP Request");
@@ -781,10 +801,12 @@ time_t getNtpTime() {
       secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
       secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
       secsSince1900 |= (unsigned long)packetBuffer[43];
+      ntpInProgress = false; // Add this line
       return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
     }
   }
   Serial.println("No NTP Response :-(");
+  ntpInProgress = false; // Add this line
   return 0;  // return 0 if unable to get the time
 }
 
