@@ -35,6 +35,8 @@ const int SCHEDULE_MAX_LENGTH = 50;
 
 uint8_t currentZone = 0;
 
+unsigned long relayOffTimes[NUM_RELAYS] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+
 String duration;
 String startTime;
 String daysArray;
@@ -606,7 +608,7 @@ void runSchedule() {
       sscanf(schedule.c_str(), "%d,%d:%d-%d:%d", &day, &testStartHour, &testStartMinute, &testStopHour, &testStopMinute);
       if (day >= 1 && day <= 7) {
         Alarm.alarmRepeat(timeDayOfWeek_t(day), testStartHour, testStartMinute, 0, zoneOn);
-        testStartMinute += duration;
+        testStartMinute += duration.toInt();
         Alarm.alarmRepeat(timeDayOfWeek_t(day), testStartHour, testStartMinute, 0, zoneOff);
       }
     }
@@ -635,7 +637,7 @@ void loop() {
   if (!ntpInProgress) {
     for (uint8_t i = 0; i < NUM_RELAYS; i++) {
       if (relayState[i]) {
-        if (now() >= relayOffTime[i]) {
+        if (now() >= relayOffTimes[i]) {
           zoneOff(i);
         }
       }
@@ -644,7 +646,6 @@ void loop() {
 
   // Check for new commands from the server
   if (millis() - lastCommandCheck >= COMMAND_CHECK_INTERVAL) {
-    lastCommandCheck();
     lastCommandCheck = millis();
   }
 }
@@ -660,9 +661,6 @@ void setZone(uint8_t zone, bool state) {
     }
   }
 }
-
-// Add a new global variable
-uint8_t currentZone = 0;
 
 void zoneOn() {
   setZoneByAlias(currentZone, true);
