@@ -33,6 +33,8 @@ const int SCHEDULE_EEPROM_START = 1000;
 const int SCHEDULE_EEPROM_SIZE = 2000;
 const int SCHEDULE_MAX_LENGTH = 50;
 
+uint8_t currentZone = 0;
+
 String duration;
 String startTime;
 String daysArray;
@@ -596,13 +598,15 @@ void setup() {
 void runSchedule() {
   clearSchedules();
   for (uint8_t zone = 0; zone < NUM_RELAYS; zone++) {
-    String schedule = EEPROM.readString(SCHEDULE_EEPROM_START + zone * SCHEDULE_EEPROM_SIZE, SCHEDULE_MAX_LENGTH);
+    String schedule = EEPROM.readString(SCHEDULE_EEPROM_START + zone * SCHEDULE_EEPROM_SIZE);
+    schedule = schedule.substring(0, SCHEDULE_MAX_LENGTH);
     if (schedule.length() > 0) {
+      currentZone = zone;
       int day, testStartHour, testStartMinute, testStopHour, testStopMinute;
       sscanf(schedule.c_str(), "%d,%d:%d-%d:%d", &day, &testStartHour, &testStartMinute, &testStopHour, &testStopMinute);
       if (day >= 1 && day <= 7) {
         Alarm.alarmRepeat(timeDayOfWeek_t(day), testStartHour, testStartMinute, 0, zoneOn);
-        testStartMinute += durationMinutes;
+        testStartMinute += duration;
         Alarm.alarmRepeat(timeDayOfWeek_t(day), testStartHour, testStartMinute, 0, zoneOff);
       }
     }
@@ -630,8 +634,8 @@ void loop() {
   // Check if NTP is not in progress before running the timer
   if (!ntpInProgress) {
     for (uint8_t i = 0; i < NUM_RELAYS; i++) {
-      if (relayStates[i]) {
-        if (now() >= relayOffTimes[i]) {
+      if (relayState[i]) {
+        if (now() >= relayOffTime[i]) {
           zoneOff(i);
         }
       }
@@ -640,7 +644,7 @@ void loop() {
 
   // Check for new commands from the server
   if (millis() - lastCommandCheck >= COMMAND_CHECK_INTERVAL) {
-    checkForCommand();
+    lastCommandCheck();
     lastCommandCheck = millis();
   }
 }
@@ -657,25 +661,20 @@ void setZone(uint8_t zone, bool state) {
   }
 }
 
-void zoneOn(uint8_t zone) {
-  Serial.print("Zone ");
-  Serial.print(zone + 1);
-  Serial.println(" On");
-  digitalWrite(relayGPIOs[zone], LOW);
-  digitalClockDisplay();
+// Add a new global variable
+uint8_t currentZone = 0;
+
+void zoneOn() {
+  setZoneByAlias(currentZone, true);
 }
 
-void zoneOff(uint8_t zone) {
-  Serial.print("Zone ");
-  Serial.print(zone + 1);
-  Serial.println(" Off");
-  digitalWrite(relayGPIOs[zone], HIGH);
-  digitalClockDisplay();
+void zoneOff() {
+  setZoneByAlias(currentZone, false);
 }
 
 void setZoneByAlias(uint8_t alias, bool state) {
   for (uint8_t i = 0; i < NUM_RELAYS; i++) {
-    if (relayGPIOS[i] == alias) {
+    if (relayGPIOs[i] == alias) {
       setZone(i, state);
       break;
     }
