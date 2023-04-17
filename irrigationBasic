@@ -36,6 +36,9 @@ int lastSyncDay = -1;
 const int SCHEDULE_EEPROM_START = 1000;
 const int SCHEDULE_EEPROM_SIZE = 2000;
 const int SCHEDULE_MAX_LENGTH = 50;
+#define DURATION_EEPROM_START 512
+#define DURATION_EEPROM_SIZE 4
+
 
 uint8_t currentZone = 0;
 
@@ -470,7 +473,7 @@ void setup() {
     String inputMessage2;
     String inputParam2;
 
-    if (request->hasParam(PARAM_INPUT_1) & request->hasParam(PARAM_INPUT_2)) {
+    if (request->hasParam(PARAM_INPUT_1) && request->hasParam(PARAM_INPUT_2)) {
       inputMessage = request->getParam(PARAM_INPUT_1)->value();
       inputParam = PARAM_INPUT_1;
       inputMessage2 = request->getParam(PARAM_INPUT_2)->value();
@@ -487,7 +490,8 @@ void setup() {
 
       // Check if the zone is manually toggled on and set a timer to turn it off after the duration
       if (inputMessage2.toInt() == 1) {
-        int durationInt = duration.toInt();
+        String durationStr = EEPROM.readString(DURATION_EEPROM_START);
+        int durationInt = durationStr.toInt();
         Serial.print("Duration: ");
         Serial.println(durationInt);
         relayIndexToTurnOff = relayIndex;
@@ -675,14 +679,14 @@ void setZone(uint8_t zone, bool state) {
 
 void zoneOn(uint8_t zone) {
   if (zone < NUM_RELAYS) {
-    digitalWrite(relayGPIOs[zone], LOW);
+    digitalWrite(relayGPIOs[zone], RELAY_ON);
     relayStates[zone] = true;  // Update the state in the relayStates array
   }
 }
 
 void zoneOff(uint8_t zone) {
   if (zone < NUM_RELAYS) {
-    digitalWrite(relayGPIOs[zone], HIGH);
+    digitalWrite(relayGPIOs[zone], RELAY_OFF);
     relayStates[zone] = false;  // Update the state in the relayStates array
   }
 }
