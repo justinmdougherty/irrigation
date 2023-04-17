@@ -29,10 +29,18 @@ const int EEPROM_SCHEDULE_STATE_ADDR = 0;
 int relayIndexToTurnOff;
 int lastSyncDay = -1;
 
+const int SCHEDULE_EEPROM_START = 1000;
+const int SCHEDULE_EEPROM_SIZE = 2000;
+const int SCHEDULE_MAX_LENGTH = 50;
 
 String duration;
 String startTime;
 String daysArray;
+
+bool ntpSynced = false;
+bool ntpInProgress = false;
+unsigned long lastCommandCheck = 0;
+const unsigned long COMMAND_CHECK_INTERVAL = 10000;  // Check for new commands every 10 seconds
 
 bool scheduleEnabled;
 bool scheduleUpdated = false;
@@ -41,7 +49,7 @@ void saveScheduleState(bool state);
 void runSchedule();
 void digitalClockDisplay();
 
-WiFiUDP Udp;
+//WiFiUDP Udp;
 unsigned int localPort = 8888;  // local port to listen for UDP packets
 
 // Set to true to define Relay as Normally Open (NO)
@@ -586,78 +594,25 @@ void setup() {
   server.begin();
 }
 
-//Runs the schedule that is set via the web interface
 void runSchedule() {
-  // Clear previously selected days
-  selectedDays.clear();
-
-  // Read the duration and startTime values from the EEPROM
-  duration = loadDuration();
-  startTime = loadStartTime();
-
-  // Get the days string from EEPROM
-  String daysStr = loadDays();
-  char daysArray[daysStr.length() + 1];
-  daysStr.toCharArray(daysArray, daysStr.length() + 1);
-  //If the slider for schedule is toggled to on run schedule, if not no schedule to run
-  if (scheduleEnabled) {
-    Serial.println("Schedule enabled.");
-
-    // Get duration, start time and days saved from input boxes
-    int durationMinutes = duration.toInt();
-    int colonIndex = startTime.indexOf(':');
-    int testStartHour = startTime.substring(0, colonIndex).toInt();
-    int testStartMinute = startTime.substring(colonIndex + 1).toInt();
-
-    Serial.print("Duration: ");
-    Serial.print(durationMinutes);
-    Serial.print(" minutes, Start time: ");
-    Serial.print(testStartHour);
-    Serial.print(":");
-    Serial.println(testStartMinute);
-    Serial.print("Schedule set at: ");
-    digitalClockDisplay();
-
-
-    // Tokenize the days string using ',' as a delimiter
-    char* token = strtok(daysArray, ",");
-    while (token != NULL) {
-      int day = atoi(token);
+  clearSchedules();
+  for (uint8_t zone = 0; zone < NUM_RELAYS; zone++) {
+    String schedule = EEPROM.readString(SCHEDULE_EEPROM_START + zone * SCHEDULE_EEPROM_SIZE, SCHEDULE_MAX_LENGTH);
+    if (schedule.length() > 0) {
+      int day, testStartHour, testStartMinute, testStopHour, testStopMinute;
+      sscanf(schedule.c_str(), "%d,%d:%d-%d:%d", &day, &testStartHour, &testStartMinute, &testStopHour, &testStopMinute);
       if (day >= 1 && day <= 7) {
-        selectedDays.push_back(day);
-      }
-      token = strtok(NULL, ",");
-    }
-
-    Serial.print("Selected days: ");
-    for (int day : selectedDays) {
-      Serial.print(day);
-      Serial.print(" ");
-    }
-    Serial.println();
-
-    // Set alarms for each selected day
-    for (int day : selectedDays) {
-      int originalStartMinute = testStartMinute;
-
-      //*****************************Run Schedule for all activated zones*****************************
-      for (int day : selectedDays) {
-        for (int zone = 0; zone < NUM_RELAYS; zone++) {
-          Alarm.alarmRepeat(timeDayOfWeek_t(day), testStartHour, testStartMinute, 0, zoneOn, zone);
-          testStartMinute += durationMinutes;
-          Alarm.alarmRepeat(timeDayOfWeek_t(day), testStartHour, testStartMinute, 0, zoneOff, zone);
-        }
+        Alarm.alarmRepeat(timeDayOfWeek_t(day), testStartHour, testStartMinute, 0, zoneOn);
+        testStartMinute += durationMinutes;
+        Alarm.alarmRepeat(timeDayOfWeek_t(day), testStartHour, testStartMinute, 0, zoneOff);
       }
     }
-
-  } else {
-    Serial.println("No Schedule to run");
   }
 }
 
 void loop() {
   time_t t = now();
-  digitalClockDisplay(t);
+  digitalClockDisplay();
 
   // Daily NTP sync
   if (hour(t) == 0 && minute(t) == 0 && second(t) <= 10 && !ntpSynced) {
@@ -715,7 +670,7 @@ void zoneOff(uint8_t zone) {
 
 void setZoneByAlias(uint8_t alias, bool state) {
   for (uint8_t i = 0; i < NUM_RELAYS; i++) {
-    if (remoteZones[i] == alias) {
+    if (relayGPIOS[i] == alias) {
       setZone(i, state);
       break;
     }
@@ -784,7 +739,7 @@ const int NTP_PACKET_SIZE = 48;      // NTP time is in the first 48 bytes of mes
 byte packetBuffer[NTP_PACKET_SIZE];  //buffer to hold incoming & outgoing packets
 
 time_t getNtpTime() {
-  ntpInProgress = true; // Add this line
+  ntpInProgress = true;  // Add this line
   while (Udp.parsePacket() > 0)
     ;  // discard any previously received packets
   Serial.println("Transmit NTP Request");
@@ -801,13 +756,13 @@ time_t getNtpTime() {
       secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
       secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
       secsSince1900 |= (unsigned long)packetBuffer[43];
-      ntpInProgress = false; // Add this line
+      ntpInProgress = false;  // Add this line
       return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
     }
   }
   Serial.println("No NTP Response :-(");
-  ntpInProgress = false; // Add this line
-  return 0;  // return 0 if unable to get the time
+  ntpInProgress = false;  // Add this line
+  return 0;               // return 0 if unable to get the time
 }
 
 // send an NTP request to the time server at the given address
