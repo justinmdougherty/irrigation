@@ -44,12 +44,11 @@ const unsigned long COMMAND_CHECK_INTERVAL = 10000;  // Check for new commands e
 
 bool scheduleEnabled;
 bool scheduleUpdated = false;
-bool ntpInProgress = false;
 void saveScheduleState(bool state);
 void runSchedule();
 void digitalClockDisplay();
 
-//WiFiUDP Udp;
+WiFiUDP Udp;
 unsigned int localPort = 8888;  // local port to listen for UDP packets
 
 // Set to true to define Relay as Normally Open (NO)
@@ -610,6 +609,12 @@ void runSchedule() {
   }
 }
 
+void clearSchedules() {
+  for (byte i = 0; i < dtNBR_ALARMS; i++) {
+    Alarm.free(i);
+  }
+}
+
 void loop() {
   time_t t = now();
   digitalClockDisplay();
@@ -676,7 +681,6 @@ void setZoneByAlias(uint8_t alias, bool state) {
     }
   }
 }
-
 
 void UpdateNTP() {
   Serial.println("TimeNTP Example");
