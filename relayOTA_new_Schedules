@@ -104,6 +104,17 @@ const char* PARAM_ZONE_DURATION = "duration";
 int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25 };
 boolean relayStates[NUM_RELAYS] = { false, false, false, false };
 
+String generateZoneButtons() {
+  String buttons = "";
+  for (int i = 0; i < NUM_RELAYS; i++) {
+    buttons += "<h3>Zone " + String(i + 1) + "</h3>";
+    buttons += "<label class=\"switch\"><input type=\"checkbox\" onchange=\"toggleZone(this, " + String(i) + ")\" id=\"zone" + String(i) + "\" %ZONE" + String(i) + "STATE%><span class=\"slider\"></span></label>";
+    buttons += "<p id=\"zone" + String(i) + "StateText\"></p>";
+  }
+  return buttons;
+}
+
+
 WiFiUDP Udp;
 
 void setup() {
@@ -581,8 +592,9 @@ color:
     <span class="slider"></span>
   </label>
   <p id="scheduleStateText"></p>
-  %BUTTONPLACEHOLDER% <br>
   <br>
+  %ZONEBUTTONS%
+
   <p>Last Updated: %UPLOADTIME%</p>
   <a href="/update">OTA Update</a>
 </body>
@@ -690,6 +702,17 @@ function saveSettings() {
     xhr.open('GET', '/getTime', true);
     xhr.send();
   }
+
+  function toggleZone(checkbox, zoneNumber) {
+    var xhr = new XMLHttpRequest();
+    if (checkbox.checked) {
+      xhr.open("GET", "/zoneControl?zone=" + zoneNumber + "&state=1", true);
+    } else {
+      xhr.open("GET", "/zoneControl?zone=" + zoneNumber + "&state=0", true);
+    }
+    xhr.send();
+  }
+
 
   // Call the necessary functions on page load, button clicks, etc.
   </ script>
