@@ -80,14 +80,12 @@ Please let me know which section you'd like to start with, and I'll provide guid
 
 */
 
-#include <TimeAlarms.h>
+#include <Arduino.h>
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
-#include <AsyncElegantOTA.h>
-#include <TimeLib.h>
-#include <Time.h>
-#include <WiFiUdp.h>
+#include <EEPROM.h>
+#include <time.h>
 
 // Constants
 const char* ssid = "Fios";
@@ -105,13 +103,44 @@ boolean relayStates[NUM_RELAYS] = { false, false, false, false };
 WiFiUDP Udp;
 
 void setup() {
+
+  // Initialize serial communication
+  Serial.begin(115200);
+
+  // Initialize GPIO pins for relay control
+  for (int i = 0; i < NUM_RELAYS; i++) {
+    pinMode(relayGPIOs[i], OUTPUT);
+    digitalWrite(relayGPIOs[i], RELAY_OFF);
+  }
+
+  // Initialize time and synchronize with NTP server
+  configTime(timeZone * 3600, 0, ntpServer);
+
+  // Initialize EEPROM
+  EEPROM.begin(EEPROM_SIZE);
+
+  // Set up web server routes
+  setupRoutes();
+
+
+
+  // Load schedule from EEPROM
+  loadScheduleFromEEPROM();
+
+  // Initialize scheduled alarms
+  initializeScheduledAlarms();
+
   // Configure the GPIO pins for relays
   for (int i = 0; i < NUM_RELAYS; i++) {
     pinMode(relayGPIOs[i], OUTPUT);
     digitalWrite(relayGPIOs[i], RELAY_OFF);
   }
 
+  //Start serial
   Serial.begin(115200);
+
+  // Connect to Wi-Fi
+  connectToWiFi();  //This line calls a function but the function code does not exist yet. Does the below code satisfy what this function is trying to accomplish?
   WiFi.mode(WIFI_STA);
   WiFi.begin(Fios, JustinJamie11 !!);
   Serial.println("");
@@ -130,7 +159,9 @@ void setup() {
 
   // rest of the setup function
 
-  //Setup AsyncServer
+  // Start the web server
+  //server.begin(); This code was already below
+  //Start AsyncServer
   AsyncElegantOTA.begin(&server);
   server.begin();
 
@@ -394,9 +425,13 @@ void setup() {
 }
 
 void loop() {
-  // ...
-  // Other loop code
-  // ...
+  if (!ntpSynced && !ntpInProgress) {
+    ntpInProgress = true;
+    if (syncTimeWithNTP()) {
+      ntpSynced = true;
+    }
+    ntpInProgress = false;
+  }
 
   // Run the scheduler
   if (scheduleEnabled && scheduleUpdated) {
@@ -422,69 +457,239 @@ In this section, I'll provide you with a sample HTML and JavaScript code that yo
 */
 
 <!DOCTYPE html>
+  <!DOCTYPE html>
   <html>
   <head>
-  <title> Irrigation Controller</ title>
-  <meta name = "viewport" content = "width=device-width, initial-scale=1.0">
+  <title> Irrigation</ title>
+  <meta name = "viewport" content = "width=device-width, initial-scale=1">
+  <link rel = "icon" href = "/favicon.ico" type = "image/x-icon">
   <style>
-  /* Add your CSS styles here */
-  </ style>
-  </ head>
-  <body>
-  <!--Add your HTML elements here-->
+    html {
+  font - family : Arial;
+display:
+  inline - block;
+  text - align : center;
+color:
+  white;
+}
+h2 {
+  font - size : 3.0rem;
+  text - align : center;
+}
+h3 {
+  font - size : 2.0rem;
+}
+p {
+  font - size : 1.0rem;
+}
+body {
+  max - width : 600px;
+margin:
+  0 auto;
+  padding - bottom : 25px;
+  text - align : left;
+  padding - left : 25px;
+  background - color : #000;
+}
+.switch {
+position:
+  relative;
+display:
+  inline - block;
+width:
+  120px;
+height:
+  68px;
+}
+.switch input {
+display:
+  none;
+}
+.slider {
+position:
+  absolute;
+top:
+  0;
+left:
+  0;
+right:
+  0;
+bottom:
+  0;
+  background - color : #fff;
+  border - radius : 34px;
+}
+.slider : before {
+position:
+  absolute;
+content:
+  "";
+height:
+  52px;
+width:
+  52px;
+left:
+  8px;
+bottom:
+  8px;
+  background - color : #666;
+  -webkit - transition : .4s;
+transition:
+  .4s;
+  border - radius : 68px;
+}
+input : checked +.slider {
+  background - color : #2196F3;
+}
+input : checked +.slider : before {
+  -webkit - transform : translateX(52px);
+  -ms - transform : translateX(52px);
+transform:
+  translateX(52px);
+}
+a : link, a : visited {
+color:
+  blue;
+}
+  </style>
+</head>
+<body>
+  <h3>Irrigation Web Server</h3>
+  <br>
+  Schedule runs for <input type="number" id="duration" step="1" min="1" max="360" style="width: 40px;"> minutes<br>
+  at <input type="time" id="startTime" style="width: 90px;"><br>
+  <label for="days">Select days to run schedule:</label>
+  <select name="days" id="days" multiple>
+    <option value="7">Sunday</option>
+    <option value="1">Monday</option>
+    <option value="2">Tuesday</option>
+    <option value="3">Wednesday</option>
+    <option value="4">Thursday</option>
+    <option value="5">Friday</option>
+    <option value="6">Saturday</option>
+  </select>
+  <br>
+  <button id="saveButton" onclick="saveSettings()">Save Settings</button>
+  <br>
+  <h3>Schedule On/Off</h3>
+  <label class="switch">
+    <input type="checkbox" onchange="toggleSchedule(this)" id="schedule" %SCHEDULESTATE%>
+    <span class="slider"></span>
+  </label>
+  <p id="scheduleStateText"></p>
+  %BUTTONPLACEHOLDER% <br>
+  <br>
+  <p>Last Updated: %UPLOADTIME%</p>
+  <a href="/update">OTA Update</a>
+</body>
 
   <script>
-    function updateZoneControl(zone, state) {
-  var xhr = new XMLHttpRequest();
-  xhr.open('POST', '/zoneControl', true);
-  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-  xhr.send('zone=' + zone + '&state=' + state);
-}
+function saveSettings() {
+    const duration = document.getElementById('duration').value;
+    const startTime = document.getElementById('startTime').value;
+    const daysSelect = document.getElementById('days');
+    const selectedDays = Array.from(daysSelect.options)
+                           .filter(option = > option.selected)
+                           .map(option = > option.value)
+                           .join(',');
 
-function updateSchedule(duration, startTime, days) {
-  var xhr = new XMLHttpRequest();
-  xhr.open('POST', '/updateSchedule', true);
-  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-  xhr.send('duration=' + duration + '&startTime=' + startTime + '&days=' + days);
-}
-
-function getSchedule() {
-  var xhr = new XMLHttpRequest();
-  xhr.onreadystatechange = function() {
-    if (this.readyState == 4 && this.status == 200) {
-      var schedule = JSON.parse(this.responseText);
-      // Update your HTML elements with the schedule information
+    const url = `/ saveSettings ? duration = ${ duration }& startTime = ${ startTime }& days = $ {
+      selectedDays
     }
-  };
-  xhr.open('GET', '/getSchedule', true);
-  xhr.send();
+    `;
+
+    fetch(url)
+      .then(response = > response.text())
+      .then(data = > {
+        console.log('Settings saved:', data);
+        alert('Settings saved successfully');
+      })
+      .catch(error = > {
+        console.error('Error saving settings:', error);
+        alert('Error saving settings');
+      });
+  }
+
+
+function toggleSchedule(checkbox) {
+  const scheduleState = checkbox.checked ? 1 : 0;
+  const url = `/toggleSchedule?state=${scheduleState}`;
+
+  fetch(url)
+    .then(response => response.text())
+    .then(data => {
+      console.log('Schedule toggled:', data);
+      updateScheduleStateText(scheduleState);
+    })
+    .catch(error => {
+      console.error('Error toggling schedule:', error);
+      alert('Error toggling schedule');
+      // Revert checkbox state in case of error
+      checkbox.checked = !checkbox.checked;
+    });
 }
 
-function setScheduleState(state) {
-  var xhr = new XMLHttpRequest();
-  xhr.open('POST', '/setScheduleState', true);
-  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-  xhr.send('state=' + state);
+function updateScheduleStateText(scheduleState) {
+  const scheduleStateText = document.getElementById('scheduleStateText');
+  if (scheduleState === 1) {
+    scheduleStateText.innerHTML = 'Schedule is ON';
+  } else {
+    scheduleStateText.innerHTML = 'Schedule is OFF';
+  }
 }
 
-function getTime() {
-  var xhr = new XMLHttpRequest();
-  xhr.onreadystatechange = function() {
-    if (this.readyState == 4 && this.status == 200) {
-      var time = this.responseText;
-      // Update your HTML elements with the current time
-    }
-  };
-  xhr.open('GET', '/getTime', true);
-  xhr.send();
-}
 
-// Call the necessary functions on page load, button clicks, etc.
-</ script>
-  </ body>
-  </ html>
+  function updateZoneControl(zone, state) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/zoneControl', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.send('zone=' + zone + '&state=' + state);
+  }
 
-  /*
+  function updateSchedule(duration, startTime, days) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/updateSchedule', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.send('duration=' + duration + '&startTime=' + startTime + '&days=' + days);
+  }
+
+  function getSchedule() {
+    var xhr = new XMLHttpRequest();
+    xhr.onreadystatechange = function() {
+      if (this.readyState == 4 && this.status == 200) {
+        var schedule = JSON.parse(this.responseText);
+        // Update your HTML elements with the schedule information
+      }
+    };
+    xhr.open('GET', '/getSchedule', true);
+    xhr.send();
+  }
+
+  function setScheduleState(state) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/setScheduleState', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.send('state=' + state);
+  }
+
+  function getTime() {
+    var xhr = new XMLHttpRequest();
+    xhr.onreadystatechange = function() {
+      if (this.readyState == 4 && this.status == 200) {
+        var time = this.responseText;
+        // Update your HTML elements with the current time
+      }
+    };
+    xhr.open('GET', '/getTime', true);
+    xhr.send();
+  }
+
+  // Call the necessary functions on page load, button clicks, etc.
+  </ script>
+    </ body>
+    </ html>
+
+    /*
 This HTML file includes JavaScript functions to interact with the server:
 
 1. updateZoneControl(zone, state) sends a request to update the zone's state.
