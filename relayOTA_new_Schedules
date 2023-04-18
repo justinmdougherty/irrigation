@@ -97,6 +97,10 @@ const int UDP_LOCAL_PORT = 8888;                // local port to listen for UDP 
 const IPAddress TIME_SERVER(15, 204, 21, 148);  // 0.us.pool.ntp.org
 const int TIME_ZONE = -4;                       // Eastern Daylight Time (USA)
 
+const char* PARAM_ZONE = "zone";
+const char* PARAM_ZONE_STATE = "state";
+const char* PARAM_ZONE_DURATION = "duration";
+
 int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25 };
 boolean relayStates[NUM_RELAYS] = { false, false, false, false };
 
@@ -177,10 +181,10 @@ In this section, we will add the web server routes to handle the requests from t
 
   // Route for handling zone control requests
   server.on("/zoneControl", HTTP_POST, [](AsyncWebServerRequest* request) {
-    if (request->hasParam("zone") && request->hasParam("state")) {
-      int zone = request->getParam("zone")->value().toInt();
-      int state = request->getParam("state")->value().toInt();
-      setZoneState(zone, state);
+    if (request->hasParam(PARAM_ZONE) && request->hasParam(PARAM_ZONE_STATE) && request->hasParam(PARAM_ZONE_DURATION)) {
+      int zone = request->getParam(PARAM_ZONE)->value().toInt();
+      int state = request->getParam(PARAM_ZONE_STATE)->value().toInt();
+      int duration = request->getParam(PARAM_ZONE_DURATION)->value().toInt();
     }
     request->send(200, "text/plain", "OK");
   });
@@ -556,8 +560,8 @@ color:
 <body>
   <h3>Irrigation Web Server</h3>
   <br>
-  Schedule runs for <input type="number" id="duration" step="1" min="1" max="360" style="width: 40px;"> minutes<br>
-  at <input type="time" id="startTime" style="width: 90px;"><br>
+  Schedule runs for <input type="number" id="zoneDuration" step="1" min="1" max="360" style="width: 40px;"> minutes<br>
+  at <input type="time" id="zoneStartTime" style="width: 90px;"><br>
   <label for="days">Select days to run schedule:</label>
   <select name="days" id="days" multiple>
     <option value="7">Sunday</option>
@@ -585,8 +589,8 @@ color:
 
   <script>
 function saveSettings() {
-    const duration = document.getElementById('duration').value;
-    const startTime = document.getElementById('startTime').value;
+    const duration = document.getElementById("duration").value;
+    const startTime = document.getElementById("startTime").value;
     const daysSelect = document.getElementById('days');
     const selectedDays = Array.from(daysSelect.options)
                            .filter(option = > option.selected)
@@ -611,32 +615,35 @@ function saveSettings() {
   }
 
 
-function toggleSchedule(checkbox) {
-  const scheduleState = checkbox.checked ? 1 : 0;
-  const url = `/toggleSchedule?state=${scheduleState}`;
+  function toggleSchedule(checkbox) {
+    const scheduleState = checkbox.checked ? 1 : 0;
+    const url = `/ toggleSchedule ? state = $ {
+      scheduleState
+    }
+    `;
 
-  fetch(url)
-    .then(response => response.text())
-    .then(data => {
-      console.log('Schedule toggled:', data);
-      updateScheduleStateText(scheduleState);
-    })
-    .catch(error => {
-      console.error('Error toggling schedule:', error);
-      alert('Error toggling schedule');
-      // Revert checkbox state in case of error
-      checkbox.checked = !checkbox.checked;
-    });
-}
-
-function updateScheduleStateText(scheduleState) {
-  const scheduleStateText = document.getElementById('scheduleStateText');
-  if (scheduleState === 1) {
-    scheduleStateText.innerHTML = 'Schedule is ON';
-  } else {
-    scheduleStateText.innerHTML = 'Schedule is OFF';
+    fetch(url)
+      .then(response = > response.text())
+      .then(data = > {
+        console.log('Schedule toggled:', data);
+        updateScheduleStateText(scheduleState);
+      })
+      .catch(error = > {
+        console.error('Error toggling schedule:', error);
+        alert('Error toggling schedule');
+        // Revert checkbox state in case of error
+        checkbox.checked = !checkbox.checked;
+      });
   }
-}
+
+  function updateScheduleStateText(scheduleState) {
+    const scheduleStateText = document.getElementById('scheduleStateText');
+    if (scheduleState == = 1) {
+      scheduleStateText.innerHTML = 'Schedule is ON';
+    } else {
+      scheduleStateText.innerHTML = 'Schedule is OFF';
+    }
+  }
 
 
   function updateZoneControl(zone, state) {
