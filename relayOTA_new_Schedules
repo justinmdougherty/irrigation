@@ -1,0 +1,223 @@
+/*
+ First, I'll suggest some changes to the global variable declarations and the setup function:
+
+Group related constants and global variables together.
+
+Remove unused variables like UPLOAD_TIME.
+
+Replace magic numbers with constants, such as the local port for the UDP server.
+
+Move the NTP server's IP address to a constant.
+
+Here are the changes in the variable declarations and setup function:
+
+
+Here's a breakdown of the code sections that need to be implemented or modified, along with reference numbers:
+
+1. Implement a function to handle incoming HTTP requests for getting and setting the schedule settings and EEPROM values.
+1. Implement a function to set up the alarms based on the current schedule settings.
+3. Implement a function to handle manual zone control.
+4. Modify the web page to:
+a. Load settings from EEPROM when the page is loaded.
+b. Send the new settings to the ESP32 when the "Save" button is clicked.
+c. Send commands to the ESP32 when the user manually toggles the zone sliders.
+5. Implement a function to save the schedule settings to EEPROM.
+6. Implement a function to load the schedule settings from EEPROM on startup.
+7. Implement a function to update the scheduleEnabled variable and the value in EEPROM when the user toggles the schedule slider.
+8. Implement a function to cancel the alarms when the schedule slider is toggled off.
+Please let me know which section you'd like to start with, and I'll provide guidance on that specific section.
+
+*/
+
+#include <TimeAlarms.h>
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncElegantOTA.h>
+#include <TimeLib.h>
+#include <Time.h>
+#include <WiFiUdp.h>
+
+// Constants
+const char* ssid = "Fios";
+const char* password = "JustinJamie11!!";
+const int NUM_RELAYS = 4;
+const int RELAY_ON = LOW;
+const int RELAY_OFF = HIGH;
+const int UDP_LOCAL_PORT = 8888; // local port to listen for UDP packets
+const IPAddress TIME_SERVER(15, 204, 21, 148); // 0.us.pool.ntp.org
+const int TIME_ZONE = -4; // Eastern Daylight Time (USA)
+
+int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25 };
+boolean relayStates[NUM_RELAYS] = { false, false, false, false };
+
+WiFiUDP Udp;
+
+void setup() {
+  // Configure the GPIO pins for relays
+  for (int i = 0; i < NUM_RELAYS; i++) {
+    pinMode(relayGPIOs[i], OUTPUT);
+    digitalWrite(relayGPIOs[i], RELAY_OFF);
+  }
+
+  Serial.begin(115200);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.println("");
+
+  // Wait for connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.print("Connected to ");
+  Serial.println(ssid);
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  // rest of the setup function
+  
+  //server side schedule
+  server.on("/schedule", HTTP_GET, handleScheduleSettings);
+}
+
+
+//Section 1: Implement a function to handle incoming HTTP requests for getting and setting the schedule settings and EEPROM values.
+
+// Section 1: Handle incoming HTTP requests for getting and setting the schedule settings and EEPROM values
+void handleScheduleSettings(AsyncWebServerRequest *request) {
+  String inputMessage1;
+  String inputMessage2;
+  String inputMessage3;
+  
+  // Check if the request has the duration, start time, and days parameters
+  if (request->hasParam(PARAM_DURATION) && request->hasParam(PARAM_START_TIME) && request->hasParam(PARAM_DAYS)) {
+    inputMessage1 = request->getParam(PARAM_DURATION)->value();
+    inputMessage2 = request->getParam(PARAM_START_TIME)->value();
+    inputMessage3 = request->getParam(PARAM_DAYS)->value();
+
+    // Save the schedule settings to EEPROM
+    saveScheduleSettings(inputMessage1, inputMessage2, inputMessage3);
+
+    // Update the current schedule settings and set up the alarms
+    updateScheduleSettings();
+  }
+
+  // Return the current schedule settings as a JSON object
+  String json = "{\"duration\":\"" + duration + "\",\"startTime\":\"" + startTime + "\",\"days\":\"" + daysArray + "\"}";
+  request->send(200, "application/json", json);
+}
+
+// Add this line to the setup() function to register the request handler
+server.on("/schedule", HTTP_GET, handleScheduleSettings);
+
+/*
+In this section, we define a function called handleScheduleSettings that takes an AsyncWebServerRequest pointer as its argument. This function will handle HTTP GET requests to the /schedule endpoint on your ESP32's web server.
+
+The function first checks if the request contains the duration, start time, and days parameters. If so, it saves the new schedule settings to EEPROM using the saveScheduleSettings function, which you will implement in section 5. Then, it updates the current schedule settings and sets up the alarms using the updateScheduleSettings function, which you will implement in section 2.
+
+Finally, the function returns the current schedule settings as a JSON object.
+
+Don't forget to add the line server.on("/schedule", HTTP_GET, handleScheduleSettings); to the setup() function to register the request handler.
+
+You can implement this function in your existing code, and I'll provide guidance on other sections as you request them.
+*/
+
+//Section 2: Implement a function to update the schedule settings and set up the alarms based on the new settings.
+
+// Section 2: Update the schedule settings and set up the alarms based on the new settings
+void updateScheduleSettings() {
+  // Update the duration, start time, and days settings from EEPROM
+  duration = EEPROM.readString(DURATION_EEPROM_START, DURATION_EEPROM_SIZE);
+  startTime = EEPROM.readString(EEPROM_STARTTIME_ADDR, SCHEDULE_MAX_LENGTH);
+  daysArray = EEPROM.readString(EEPROM_DAYS_ADDR, EEPROM_MAX_DAYS_LENGTH);
+
+  // Convert the start time string to hours and minutes
+  int hours = startTime.substring(0, 2).toInt();
+  int minutes = startTime.substring(3, 5).toInt();
+
+  // Clear all existing alarms
+  Alarm.clear();
+
+  // Iterate through the daysArray string and set up alarms for the selected days
+  for (int i = 0; i < daysArray.length(); i += 2) {
+    int dayOfWeek = daysArray.substring(i, i + 1).toInt();
+    if (dayOfWeek >= 1 && dayOfWeek <= 7) {
+      time_t alarmTime = AlarmHMS(hours, minutes, 0);
+      Alarm.alarmRepeat(dowSunday() + dayOfWeek - 1, alarmTime, runSchedule);
+    }
+  }
+}
+/*
+In this section, we define a function called updateScheduleSettings that updates the schedule settings from EEPROM and sets up the alarms based on the new settings.
+
+The function first reads the duration, start time, and days settings from EEPROM. Then, it converts the start time string to hours and minutes. After that, the function clears all existing alarms.
+
+Next, the function iterates through the daysArray string and sets up alarms for the selected days. It calculates the alarm time based on the hours and minutes, and then sets up a repeating alarm for each day of the week using the runSchedule function, which you will implement in section 3.
+
+You can implement this function in your existing code.
+*/
+
+//Section 3: Implement the runSchedule() function to control the zones sequentially based on the schedule settings.
+
+// Section 3: Implement the runSchedule() function to control the zones sequentially based on the schedule settings
+void runSchedule() {
+  int durationInt = duration.toInt() * 60; // Convert duration to seconds
+  for (int i = 0; i < NUM_RELAYS; i++) {
+    // Set an alarm to turn on the current zone
+    Alarm.timerOnce(i * durationInt, [i]() {
+      zoneOn(i);
+    });
+
+    // Set an alarm to turn off the current zone after the duration
+    Alarm.timerOnce((i + 1) * durationInt, [i]() {
+      zoneOff(i);
+    });
+  }
+}
+
+/*
+In this section, we define a function called runSchedule that controls the zones sequentially based on the schedule settings.
+
+The function first converts the duration from minutes to seconds. Then, it iterates through the number of zones and sets up two alarms for each zone. The first alarm turns on the current zone, and the second alarm turns off the current zone after the specified duration.
+
+You can implement this function in your existing code.
+*/
+
+//Section 4: Implement the function to save the schedule state and handle the slider state changes.
+
+// Section 4: Implement the function to save the schedule state and handle the slider state changes
+void saveScheduleState(bool state) {
+  scheduleEnabled = state;
+  EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, scheduleEnabled);
+  EEPROM.commit();
+}
+
+void handleScheduleSlider(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+  if (request->hasParam(PARAM_INPUT_1, true)) {
+    String inputMessage = request->getParam(PARAM_INPUT_1, true)->value();
+    int state = inputMessage.toInt();
+    saveScheduleState(state == 1);
+    if (scheduleEnabled) {
+      runSchedule();
+    } else {
+      // Cancel all alarms
+      for (int i = 0; i < NUM_RELAYS * 2; i++) {
+        Alarm.free(i);
+      }
+    }
+  }
+  request->send(200, "text/plain", "OK");
+}
+
+/*
+In this section, we implement a function called saveScheduleState that saves the schedule state to the EEPROM. The function takes a boolean argument representing the schedule state and writes it to the EEPROM.
+
+We also implement the handleScheduleSlider function to handle the slider state changes on the webpage. When a slider state change is detected, this function updates the schedule state and either runs the schedule or cancels all alarms, depending on the new state.
+
+You can implement this function in your existing code.
+*/
+
+//
