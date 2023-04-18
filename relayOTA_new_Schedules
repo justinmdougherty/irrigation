@@ -114,6 +114,13 @@ String generateZoneButtons() {
   return buttons;
 }
 
+String processor(const String& var) {
+  if (var == "BUTTONPLACEHOLDER") {
+    return generateZoneButtons();
+  }
+  // Add other placeholder replacements here, if needed
+}
+
 
 WiFiUDP Udp;
 
@@ -188,49 +195,57 @@ In this section, we will add the web server routes to handle the requests from t
 
 
   //server side code
-  server.on("/schedule", HTTP_GET, handleScheduleSettings);
 
-  // Route for handling zone control requests
-  server.on("/zoneControl", HTTP_POST, [](AsyncWebServerRequest* request) {
-    if (request->hasParam(PARAM_ZONE) && request->hasParam(PARAM_ZONE_STATE) && request->hasParam(PARAM_ZONE_DURATION)) {
-      int zone = request->getParam(PARAM_ZONE)->value().toInt();
-      int state = request->getParam(PARAM_ZONE_STATE)->value().toInt();
-      int duration = request->getParam(PARAM_ZONE_DURATION)->value().toInt();
-    }
-    request->send(200, "text/plain", "OK");
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+    String s = MAIN_page;  //Read HTML contents
+    s.replace("%BUTTONPLACEHOLDER%", processor("BUTTONPLACEHOLDER"));
+    request->send(200, "text/html", s);
   });
+});
 
-  // Route for handling schedule update requests
-  server.on("/updateSchedule", HTTP_POST, [](AsyncWebServerRequest* request) {
-    if (request->hasParam("duration") && request->hasParam("startTime") && request->hasParam("days")) {
-      int duration = request->getParam("duration")->value().toInt();
-      String startTime = request->getParam("startTime")->value();
-      String days = request->getParam("days")->value();
-      updateSchedule(duration, startTime, days);
-    }
-    request->send(200, "text/plain", "OK");
-  });
+server.on("/schedule", HTTP_GET, handleScheduleSettings);
 
-  // Route for handling schedule retrieval requests
-  server.on("/getSchedule", HTTP_GET, [](AsyncWebServerRequest* request) {
-    String scheduleJson = getScheduleJson();
-    request->send(200, "application/json", scheduleJson);
-  });
+// Route for handling zone control requests
+server.on("/zoneControl", HTTP_POST, [](AsyncWebServerRequest* request) {
+  if (request->hasParam(PARAM_ZONE) && request->hasParam(PARAM_ZONE_STATE) && request->hasParam(PARAM_ZONE_DURATION)) {
+    int zone = request->getParam(PARAM_ZONE)->value().toInt();
+    int state = request->getParam(PARAM_ZONE_STATE)->value().toInt();
+    int duration = request->getParam(PARAM_ZONE_DURATION)->value().toInt();
+  }
+  request->send(200, "text/plain", "OK");
+});
 
-  // Route for handling schedule state setting requests
-  server.on("/setScheduleState", HTTP_POST, [](AsyncWebServerRequest* request) {
-    if (request->hasParam("state")) {
-      int state = request->getParam("state")->value().toInt();
-      setScheduleState(state);
-    }
-    request->send(200, "text/plain", "OK");
-  });
+// Route for handling schedule update requests
+server.on("/updateSchedule", HTTP_POST, [](AsyncWebServerRequest* request) {
+  if (request->hasParam("duration") && request->hasParam("startTime") && request->hasParam("days")) {
+    int duration = request->getParam("duration")->value().toInt();
+    String startTime = request->getParam("startTime")->value();
+    String days = request->getParam("days")->value();
+    updateSchedule(duration, startTime, days);
+  }
+  request->send(200, "text/plain", "OK");
+});
 
-  // Route for handling time retrieval requests
-  server.on("/getTime", HTTP_GET, [](AsyncWebServerRequest* request) {
-    String timeStr = getTimeString();
-    request->send(200, "text/plain", timeStr);
-  });
+// Route for handling schedule retrieval requests
+server.on("/getSchedule", HTTP_GET, [](AsyncWebServerRequest* request) {
+  String scheduleJson = getScheduleJson();
+  request->send(200, "application/json", scheduleJson);
+});
+
+// Route for handling schedule state setting requests
+server.on("/setScheduleState", HTTP_POST, [](AsyncWebServerRequest* request) {
+  if (request->hasParam("state")) {
+    int state = request->getParam("state")->value().toInt();
+    setScheduleState(state);
+  }
+  request->send(200, "text/plain", "OK");
+});
+
+// Route for handling time retrieval requests
+server.on("/getTime", HTTP_GET, [](AsyncWebServerRequest* request) {
+  String timeStr = getTimeString();
+  request->send(200, "text/plain", timeStr);
+});
 }
 
 /*
@@ -593,7 +608,8 @@ color:
   </label>
   <p id="scheduleStateText"></p>
   <br>
-  %ZONEBUTTONS%
+
+  %BUTTONPLACEHOLDER%
 
   <p>Last Updated: %UPLOADTIME%</p>
   <a href="/update">OTA Update</a>
