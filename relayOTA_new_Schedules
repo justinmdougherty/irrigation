@@ -1,5 +1,56 @@
 /*
- First, I'll suggest some changes to the global variable declarations and the setup function:
+Webpage loading
+1. checks if there are previous settings saved in EEPROM and applies them. Checks the status of the schedule toggle from EEPROM and changes the state of the toggle to match the saved state. The saved settings are loaded into the duration, time, and day boxes to display the current saved schedule.
+
+Providing schedule and saving settings
+2. If there are no settings and settings are populated, or settings changed from previous saved settings then on clickSaveSettings, save the settings to EEPROM and load those settings so if the slider state is = 1 then the schedule will run.
+
+If the slider state is = 1 then if (scheduleEnabled) is true, 1 or whatever it's looking for and the schedule will run at the set time for the duration of the set days.
+
+If slider state is = 0 then if (scheduleEnabled) is false or 0 and does nothing happens.
+
+If at any time a zone slider is manually toggled to on, it should run until turned off or run for the "duration" setting if that is populated in the input box at the top of the webpage.
+
+- I want to run a schedule that is toggled on or off by a slider just like the others that I have to manually turn on the zones. When the slider is toggled on, a state (scheduleEnabled == "1") should be saved to eeprom 
+ so I can reload the page and have the settings persist. when the page loads on refresh it should check the stored state in eeprom for the current state of the slider and the 0 or 1. 
+ a runSchedule() function should run the schedule when the state is = 1 and not run if 0. 
+ The state is set to 0 when the slider is toggled, it should run code to cancel the alarms. 
+
+-An input box that allows me to enter a duration in minutes, another input box that has a time input that allows me to select the 
+ start time, and a multi selection drop down list that allows me to choose what days of the week I want the schedule to run. There can only be 1 zone on at at time, so 
+ the schedule must cycle through each one at a time. I will be adding more zones later so it should be easy to make additions.
+ 
+ - I will supply the duration, the start time and the days i want it to run, and then when I click a button "save" it should save those settings into eeprom and then feed them to the schedule 
+ function to run at the correct times on the right days for the set amount of time as long as the schedule tollgle is state = 1
+ 
+ - When the slider is turned off the settings that were previously supplied should remain so it can be reapplied later.
+
+Thank you for the detailed explanation of how you want the system to operate. It's helpful for understanding the requirements and guiding the code suggestions.
+
+Based on your description, here are some key points to consider:
+
+1. Loading settings from EEPROM on the web page: This will require JavaScript in your HTML to make asynchronous requests to the ESP32 to retrieve the settings when the page loads. The ESP32 will need to handle these requests and respond with the current settings stored in EEPROM.
+
+2. Saving settings to EEPROM: When the user clicks the "Save" button, the web page should send the new settings to the ESP32. The ESP32 should then save these settings to EEPROM and update the relevant variables in the code.
+
+3. Toggling the schedule: When the user toggles the schedule slider, the ESP32 should update the scheduleEnabled variable and the value in EEPROM. When scheduleEnabled is true, the ESP32 should set up the alarms according to the schedule settings. When scheduleEnabled is false, the ESP32 should cancel the alarms.
+
+4. Running the schedule: The ESP32 should have a function that sets up the alarms based on the current schedule settings. This function should be called when the schedule is enabled and when the settings are updated.
+
+5. Handling manual zone control: The web page should send commands to the ESP32 when the user manually toggles the zone sliders. The ESP32 should turn on the corresponding relay for the specified duration or until the slider is toggled off.
+
+Here's an outline of the code structure to implement these features:
+
+1. Create a function to handle incoming HTTP requests for getting and setting the schedule settings and EEPROM values.
+2.Create a function to set up the alarms based on the current schedule settings.
+3. Create a function to handle manual zone control.
+4. Modify the web page to load settings from EEPROM when the page is loaded, send the new settings to the ESP32 when the "Save" button is clicked, and send commands to the ESP32 when the user manually toggles the zone sliders.
+
+I'll start by providing code suggestions for the ESP32 side of things. The first step is to modify the code I provided earlier to include EEPROM and implement functions to handle incoming HTTP requests for getting and setting the schedule settings and EEPROM values.
+
+Please let me know if you need clarification or help with any specific part of the code, and I'll provide guidance on that.
+
+First, I'll suggest some changes to the global variable declarations and the setup function:
 
 Group related constants and global variables together.
 
@@ -44,9 +95,9 @@ const char* password = "JustinJamie11!!";
 const int NUM_RELAYS = 4;
 const int RELAY_ON = LOW;
 const int RELAY_OFF = HIGH;
-const int UDP_LOCAL_PORT = 8888; // local port to listen for UDP packets
-const IPAddress TIME_SERVER(15, 204, 21, 148); // 0.us.pool.ntp.org
-const int TIME_ZONE = -4; // Eastern Daylight Time (USA)
+const int UDP_LOCAL_PORT = 8888;                // local port to listen for UDP packets
+const IPAddress TIME_SERVER(15, 204, 21, 148);  // 0.us.pool.ntp.org
+const int TIME_ZONE = -4;                       // Eastern Daylight Time (USA)
 
 int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25 };
 boolean relayStates[NUM_RELAYS] = { false, false, false, false };
@@ -62,7 +113,7 @@ void setup() {
 
   Serial.begin(115200);
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
+  WiFi.begin(Fios, JustinJamie11 !!);
   Serial.println("");
 
   // Wait for connection
@@ -78,20 +129,83 @@ void setup() {
   Serial.println(WiFi.localIP());
 
   // rest of the setup function
-  
-  //server side schedule
+
+  //Setup AsyncServer
+  AsyncElegantOTA.begin(&server);
+  server.begin();
+
+  /*
+Section 8: Web Server Routes
+
+In this section, we will add the web server routes to handle the requests from the client-side JavaScript. Add the following routes to your main code file (inside the setup() function, after the AsyncWebServer object creation).
+*/
+
+
+  //server side code
   server.on("/schedule", HTTP_GET, handleScheduleSettings);
+
+  // Route for handling zone control requests
+  server.on("/zoneControl", HTTP_POST, [](AsyncWebServerRequest* request) {
+    if (request->hasParam("zone") && request->hasParam("state")) {
+      int zone = request->getParam("zone")->value().toInt();
+      int state = request->getParam("state")->value().toInt();
+      setZoneState(zone, state);
+    }
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Route for handling schedule update requests
+  server.on("/updateSchedule", HTTP_POST, [](AsyncWebServerRequest* request) {
+    if (request->hasParam("duration") && request->hasParam("startTime") && request->hasParam("days")) {
+      int duration = request->getParam("duration")->value().toInt();
+      String startTime = request->getParam("startTime")->value();
+      String days = request->getParam("days")->value();
+      updateSchedule(duration, startTime, days);
+    }
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Route for handling schedule retrieval requests
+  server.on("/getSchedule", HTTP_GET, [](AsyncWebServerRequest* request) {
+    String scheduleJson = getScheduleJson();
+    request->send(200, "application/json", scheduleJson);
+  });
+
+  // Route for handling schedule state setting requests
+  server.on("/setScheduleState", HTTP_POST, [](AsyncWebServerRequest* request) {
+    if (request->hasParam("state")) {
+      int state = request->getParam("state")->value().toInt();
+      setScheduleState(state);
+    }
+    request->send(200, "text/plain", "OK");
+  });
+
+  // Route for handling time retrieval requests
+  server.on("/getTime", HTTP_GET, [](AsyncWebServerRequest* request) {
+    String timeStr = getTimeString();
+    request->send(200, "text/plain", timeStr);
+  });
 }
 
+/*
+These routes handle the different requests from the client-side JavaScript:
 
-//Section 1: Implement a function to handle incoming HTTP requests for getting and setting the schedule settings and EEPROM values.
+1. /zoneControl handles zone control requests, updates the zone state, and returns a response.
+2. /updateSchedule handles schedule update requests, updates the schedule, and returns a response.
+3. /getSchedule handles schedule retrieval requests, returns the schedule as JSON.
+4. /setScheduleState handles schedule state setting requests, sets the schedule state, and returns a response.
+5. /getTime handles time retrieval requests, returns the current time as a string.
+
+Make sure to implement the functions setZoneState, updateSchedule, getScheduleJson, setScheduleState, and getTimeString as needed, based on your existing code and the previous sections provided.
+*/
+
 
 // Section 1: Handle incoming HTTP requests for getting and setting the schedule settings and EEPROM values
-void handleScheduleSettings(AsyncWebServerRequest *request) {
+void handleScheduleSettings(AsyncWebServerRequest* request) {
   String inputMessage1;
   String inputMessage2;
   String inputMessage3;
-  
+
   // Check if the request has the duration, start time, and days parameters
   if (request->hasParam(PARAM_DURATION) && request->hasParam(PARAM_START_TIME) && request->hasParam(PARAM_DAYS)) {
     inputMessage1 = request->getParam(PARAM_DURATION)->value();
@@ -122,10 +236,7 @@ Finally, the function returns the current schedule settings as a JSON object.
 
 Don't forget to add the line server.on("/schedule", HTTP_GET, handleScheduleSettings); to the setup() function to register the request handler.
 
-You can implement this function in your existing code, and I'll provide guidance on other sections as you request them.
 */
-
-//Section 2: Implement a function to update the schedule settings and set up the alarms based on the new settings.
 
 // Section 2: Update the schedule settings and set up the alarms based on the new settings
 void updateScheduleSettings() {
@@ -156,15 +267,11 @@ In this section, we define a function called updateScheduleSettings that updates
 The function first reads the duration, start time, and days settings from EEPROM. Then, it converts the start time string to hours and minutes. After that, the function clears all existing alarms.
 
 Next, the function iterates through the daysArray string and sets up alarms for the selected days. It calculates the alarm time based on the hours and minutes, and then sets up a repeating alarm for each day of the week using the runSchedule function, which you will implement in section 3.
-
-You can implement this function in your existing code.
 */
-
-//Section 3: Implement the runSchedule() function to control the zones sequentially based on the schedule settings.
 
 // Section 3: Implement the runSchedule() function to control the zones sequentially based on the schedule settings
 void runSchedule() {
-  int durationInt = duration.toInt() * 60; // Convert duration to seconds
+  int durationInt = duration.toInt() * 60;  // Convert duration to seconds
   for (int i = 0; i < NUM_RELAYS; i++) {
     // Set an alarm to turn on the current zone
     Alarm.timerOnce(i * durationInt, [i]() {
@@ -182,11 +289,8 @@ void runSchedule() {
 In this section, we define a function called runSchedule that controls the zones sequentially based on the schedule settings.
 
 The function first converts the duration from minutes to seconds. Then, it iterates through the number of zones and sets up two alarms for each zone. The first alarm turns on the current zone, and the second alarm turns off the current zone after the specified duration.
-
-You can implement this function in your existing code.
 */
 
-//Section 4: Implement the function to save the schedule state and handle the slider state changes.
 
 // Section 4: Implement the function to save the schedule state and handle the slider state changes
 void saveScheduleState(bool state) {
@@ -216,8 +320,178 @@ void handleScheduleSlider(AsyncWebServerRequest* request, uint8_t* data, size_t 
 In this section, we implement a function called saveScheduleState that saves the schedule state to the EEPROM. The function takes a boolean argument representing the schedule state and writes it to the EEPROM.
 
 We also implement the handleScheduleSlider function to handle the slider state changes on the webpage. When a slider state change is detected, this function updates the schedule state and either runs the schedule or cancels all alarms, depending on the new state.
-
-You can implement this function in your existing code.
 */
 
-//
+
+// Section 5: Implement the function to handle manual control of zones and the function to handle schedule updates
+void handleZoneControl(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+  if (request->hasParam(PARAM_INPUT_1, true) && request->hasParam(PARAM_INPUT_2, true)) {
+    String inputMessage1 = request->getParam(PARAM_INPUT_1, true)->value();
+    String inputMessage2 = request->getParam(PARAM_INPUT_2, true)->value();
+    int relayIndex = inputMessage1.toInt();
+    int state = inputMessage2.toInt();
+    digitalWrite(relayGPIOs[relayIndex], state == 1 ? RELAY_ON : RELAY_OFF);
+    relayStates[relayIndex] = state == 1;
+  }
+  request->send(200, "text/plain", "OK");
+}
+
+void handleUpdateSchedule(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
+  if (request->hasParam(PARAM_DURATION, true) && request->hasParam(PARAM_START_TIME, true) && request->hasParam(PARAM_DAYS, true)) {
+    duration = request->getParam(PARAM_DURATION, true)->value();
+    startTime = request->getParam(PARAM_START_TIME, true)->value();
+    daysArray = request->getParam(PARAM_DAYS, true)->value();
+    saveSchedule();
+    if (scheduleEnabled) {
+      runSchedule();
+    }
+  }
+  request->send(200, "text/plain", "OK");
+}
+
+/*
+In this section, we implement two functions: handleZoneControl and handleUpdateSchedule. The handleZoneControl function is responsible for handling manual control of the zones. It checks if the necessary parameters are present in the request, and if so, it updates the relay state accordingly.
+
+The handleUpdateSchedule function handles schedule updates. It checks if the necessary parameters are present in the request, and if so, it saves the schedule and runs it if the schedule is enabled.
+*/
+
+// Section 6: Setting up the server to handle requests, starting the server, and running the loop function
+void setupServerRoutes() {
+  // Serve HTML, CSS, and JavaScript files
+  server.serveStatic("/", SPIFFS, "/").setDefaultFile("index.html");
+
+  // Handle manual control of zones
+  server.on(
+    "/zoneControl", HTTP_POST, [](AsyncWebServerRequest* request) {}, NULL, handleZoneControl);
+
+  // Handle updating the schedule
+  server.on(
+    "/updateSchedule", HTTP_POST, [](AsyncWebServerRequest* request) {}, NULL, handleUpdateSchedule);
+
+  // Handle getting the current schedule
+  server.on("/getSchedule", HTTP_GET, handleGetSchedule);
+
+  // Handle setting the schedule state (enabled/disabled)
+  server.on("/setScheduleState", HTTP_POST, handleSetScheduleState);
+
+  // Handle requests for the current time
+  server.on("/getTime", HTTP_GET, handleGetTime);
+
+  // Handle OTA updates
+  AsyncElegantOTA.begin(&server);
+
+  // Start the server
+  server.begin();
+}
+
+void setup() {
+  // ...
+  // Other setup code
+  // ...
+
+  // Setup server routes and start the server
+  setupServerRoutes();
+}
+
+void loop() {
+  // ...
+  // Other loop code
+  // ...
+
+  // Run the scheduler
+  if (scheduleEnabled && scheduleUpdated) {
+    runSchedule();
+  }
+
+  // Handle OTA updates
+  AsyncElegantOTA.loop();
+}
+
+/*
+In this section, we set up the server routes to handle different requests, start the server, and add the necessary code to the loop function. The setupServerRoutes function sets up the routes for serving static files, handling manual control of zones, updating the schedule, getting the current schedule, setting the schedule state, getting the current time, and handling OTA updates. Then, the server is started.
+
+In the setup function, call the setupServerRoutes function after the rest of the setup code.
+
+In the loop function, we run the scheduler if the schedule is enabled and updated, and we handle OTA updates using AsyncElegantOTA.loop().
+*/
+
+/*
+Section 7: Handling client-side JavaScript and HTML for user interactions and displaying the schedule
+
+In this section, I'll provide you with a sample HTML and JavaScript code that you can modify to fit your needs. This code should be placed in your index.html file, which should be stored in your ESP32's SPIFFS file system. Make sure to upload the file to your ESP32 using the SPIFFS uploader.
+*/
+
+<!DOCTYPE html>
+  <html>
+  <head>
+  <title> Irrigation Controller</ title>
+  <meta name = "viewport" content = "width=device-width, initial-scale=1.0">
+  <style>
+  /* Add your CSS styles here */
+  </ style>
+  </ head>
+  <body>
+  <!--Add your HTML elements here-->
+
+  <script>
+    function updateZoneControl(zone, state) {
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/zoneControl', true);
+  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  xhr.send('zone=' + zone + '&state=' + state);
+}
+
+function updateSchedule(duration, startTime, days) {
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/updateSchedule', true);
+  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  xhr.send('duration=' + duration + '&startTime=' + startTime + '&days=' + days);
+}
+
+function getSchedule() {
+  var xhr = new XMLHttpRequest();
+  xhr.onreadystatechange = function() {
+    if (this.readyState == 4 && this.status == 200) {
+      var schedule = JSON.parse(this.responseText);
+      // Update your HTML elements with the schedule information
+    }
+  };
+  xhr.open('GET', '/getSchedule', true);
+  xhr.send();
+}
+
+function setScheduleState(state) {
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/setScheduleState', true);
+  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  xhr.send('state=' + state);
+}
+
+function getTime() {
+  var xhr = new XMLHttpRequest();
+  xhr.onreadystatechange = function() {
+    if (this.readyState == 4 && this.status == 200) {
+      var time = this.responseText;
+      // Update your HTML elements with the current time
+    }
+  };
+  xhr.open('GET', '/getTime', true);
+  xhr.send();
+}
+
+// Call the necessary functions on page load, button clicks, etc.
+</ script>
+  </ body>
+  </ html>
+
+  /*
+This HTML file includes JavaScript functions to interact with the server:
+
+1. updateZoneControl(zone, state) sends a request to update the zone's state.
+2. updateSchedule(duration, startTime, days) sends a request to update the schedule.
+3. getSchedule() sends a request to get the current schedule and update the HTML elements with the schedule information.
+4. setScheduleState(state) sends a request to set the schedule state (enabled or disabled).
+5. getTime() sends a request to get the current time and update the HTML elements with the time.
+
+You'll need to modify this code to fit your existing web page structure and design. Make sure to call the necessary functions on page load, button clicks, or other events.
+*/
