@@ -1,0 +1,678 @@
+
+
+// Import required libraries
+#include <TimeAlarms.h>         //
+#include <WiFi.h>               //
+#include <AsyncTCP.h>           //
+#include <ESPAsyncWebServer.h>  //
+#include <AsyncElegantOTA.h>    //
+#include <TimeLib.h>            //
+#include <Time.h>               //
+#include <WiFiUdp.h>
+#include <EEPROM.h>
+
+
+bool scheduleEnabled = true;  // Set it to true or false based on your initial preference
+const int EEPROM_SCHEDULE_STATE_ADDR = 0;
+
+
+void runSchedule();
+void digitalClockDisplay();
+
+
+WiFiUDP Udp;
+unsigned int localPort = 8888;  // local port to listen for UDP packets
+
+// Set to true to define Relay as Normally Open (NO)
+#define RELAY_NO true
+
+// Set number of relays
+//#define NUM_RELAYS 8
+#define NUM_RELAYS 4
+
+// Assign each GPIO to a relay
+//int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25, 15, 2, 0, 4 };
+int relayGPIOs[NUM_RELAYS] = { 27, 33, 26, 25 };
+
+// Replace with your network credentials
+const char* ssid = "Fios";
+const char* password = "JustinJamie11!!";
+
+// NTP Servers:
+//IPAddress timeServer(132, 163, 4, 101); // time-a.timefreq.bldrdoc.gov
+IPAddress timeServer(15, 204, 21, 148);  // 0.us.pool.ntp.org
+// IPAddress timeServer(132, 163, 4, 102); // time-b.timefreq.bldrdoc.gov
+// IPAddress timeServer(132, 163, 4, 103); // time-c.timefreq.bldrdoc.gov
+
+
+//const int timeZone = 1;     // Central European Time
+//const int timeZone = -5;  // Eastern Standard Time (USA)
+const int timeZone = -4;  // Eastern Daylight Time (USA)
+//const int timeZone = -8;  // Pacific Standard Time (USA)
+//const int timeZone = -7;  // Pacific Daylight Time (USA)
+
+const char* PARAM_INPUT_1 = "relay";
+const char* PARAM_INPUT_2 = "state";
+
+
+// Create AsyncWebServer object on port 80
+AsyncWebServer server(80);
+
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html>
+<head>
+  <title>Irrigation</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background-color: #f0f0f0;
+      color: #333;
+    }
+    h3 {
+      margin: 1rem 0;
+    }
+    input[type=number] {
+      width: 100%;
+      padding: 10px;
+      margin: 6px 0;
+      box-sizing: border-box;
+      font-size: 18px;
+    }
+    button {
+      background-color: #4CAF50;
+      border: none;
+      color: white;
+      padding: 10px 20px;
+      text-align: center;
+      text-decoration: none;
+      display: inline-block;
+      font-size: 18px;
+      margin: 6px 0;
+      cursor: pointer;
+      width: 100%;
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 60px;
+      height: 34px;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      -webkit-transition: .4s;
+      transition: .4s;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 26px;
+      width: 26px;
+      left: 4px;
+      bottom: 4px;
+      background-color: white;
+      -webkit-transition: .4s;
+      transition: .4s;
+    }
+    input:checked + .slider {
+      background-color: #2196F3;
+    }
+    input:focus + .slider {
+      box-shadow: 0 0 1px #2196F3;
+    }
+    input:checked + .slider:before {
+      -webkit-transform: translateX(26px);
+      -ms-transform: translateX(26px);
+      transform: translateX(26px);
+    }
+    .slider.round {
+      border-radius: 34px;
+    }
+    .slider.round:before {
+      border-radius: 50%;
+    }
+  </style>
+</head>
+<body>
+  <h3>Irrigation Web Server</h3>
+  Last Updated: 4/10/2023 <br>
+  Schedule runs every day<br>
+  for 20 minutes at 4PM<br>
+  <a href="/update">Update</a>
+  
+  <h3>Schedule On/Off</h3>
+  <label class="switch">
+    <input type="checkbox" id="schedule" onchange="toggleSchedule(this)" %SCHEDULESTATE%>
+    <span class="slider"></span>
+  </label>
+
+  <h3>Manual Zone Control</h3>
+  %BUTTONPLACEHOLDER%
+
+  <h3>Run for Duration</h3>
+  <label>Duration (minutes):</label>
+  <input type="number" id="duration" value="10" min="1" max="60" step="1">
+  <button onclick="startIrrigation()">Start</button>
+
+  <h3>Current Zone</h3>
+  <div id="current-zone">0</div>
+  
+<h3>Time Left (mm:ss)</h3>
+<div id="time-left">0:00</div>
+
+</body>
+
+
+<script>
+var currentZone = 0;
+var duration = 10;
+var irrigationTimer;
+
+function toggleCheckbox(element) {
+  var xhr = new XMLHttpRequest();
+  if(element.checked){ xhr.open("GET", "/updates?relay="+element.id+"&state=1", true); }
+  else { xhr.open("GET", "/updates?relay="+element.id+"&state=0", true); }
+  xhr.send();
+}
+
+function toggleSchedule(element) {
+  var xhr = new XMLHttpRequest();
+  if(element.checked){ xhr.open("GET", "/schedule?state=1", true); }
+  else { xhr.open("GET", "/schedule?state=0", true); }
+  xhr.send();
+}
+
+function startIrrigation() {
+  duration = document.getElementById('duration').value * 60 * 1000;
+  cycleZones();
+}
+
+function cycleZones() {
+  if (currentZone > 0) {
+    toggleZone(currentZone, false);
+  }
+  currentZone++;
+  if (currentZone > 4) {
+    currentZone = 0;
+    updateZoneStatus(currentZone, 0);
+    return;
+  }
+  toggleZone(currentZone, true);
+  irrigationTimer = setTimeout(cycleZones, duration);
+  updateZoneStatus(currentZone, duration / 1000);
+  const intervalId = setInterval(function() {
+    duration -= 1000;
+    if (duration <= 0) {
+      clearInterval(intervalId);
+    }
+    updateZoneStatus(currentZone, duration / 1000);
+  }, 1000);
+}
+
+function toggleZone(zone, state) {
+  var xhr = new XMLHttpRequest();
+  if(state){ xhr.open("GET", "/updates?relay="+zone+"&state=1", true); }
+  else { xhr.open("GET", "/updates?relay="+zone+"&state=0", true); }
+  xhr.send();
+}
+
+function updateZoneStatus(currentZone, timeLeft) {
+  document.getElementById("current-zone").innerText = currentZone;
+
+  const minutes = Math.floor(timeLeft / 60);
+  const seconds = timeLeft % 60;
+  document.getElementById("time-left").innerText = `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+</script>
+</body>
+</html>
+)rawliteral";
+
+// Replaces placeholder with button section in your web page
+
+String processor(const String& var) {
+  if (var == "BUTTONPLACEHOLDER") {
+    String buttons = "";
+    for (int i = 1; i <= NUM_RELAYS; i++) {
+      String relayStateValue = relayState(i);
+      buttons += "<h4>Zone #" + String(i) + "</h4><label class=\"switch\"><input type=\"checkbox\" onchange=\"toggleCheckbox(this)\" id=\"" + String(i) + "\" " + relayStateValue + "><span class=\"slider\"></span></label>";
+    }
+    return buttons;
+  } else if (var == "SCHEDULESTATE") {
+    return scheduleEnabled ? "checked" : "";
+  }
+  return String();
+}
+
+
+String relayState(int numRelay) {
+  if (RELAY_NO) {
+    if (digitalRead(relayGPIOs[numRelay - 1])) {
+      return "";
+    } else {
+      return "checked";
+    }
+  } else {
+    if (digitalRead(relayGPIOs[numRelay - 1])) {
+      return "checked";
+    } else {
+      return "";
+    }
+  }
+  return "";
+}
+
+void setup() {
+  // Serial port for debugging purposes
+  Serial.begin(115200);
+
+  EEPROM.begin(512);
+  scheduleEnabled = EEPROM.read(EEPROM_SCHEDULE_STATE_ADDR);
+
+  UpdateNTP();
+
+  runSchedule();  // Add this line to call the runSchedule function
+
+  Serial.println("Setting Alarms...");
+
+  Alarm.alarmRepeat(0, 0, 1, UpdateNTP);
+
+
+  // Set all relays to off when the program starts - if set to Normally Open (NO), the relay is off when you set the relay to HIGH
+  for (int i = 1; i <= NUM_RELAYS; i++) {
+    pinMode(relayGPIOs[i - 1], OUTPUT);
+    if (RELAY_NO) {
+      digitalWrite(relayGPIOs[i - 1], HIGH);
+    } else {
+      digitalWrite(relayGPIOs[i - 1], LOW);
+    }
+  }
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi..");
+  }
+
+  // Print ESP32 Local IP Address
+  Serial.println(WiFi.localIP());
+
+  // Route for root / web page
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send_P(200, "text/html", index_html, processor);
+  });
+
+
+//Send a GET request to <ESP_IP>/update?relay=<inputMessage>&state=<inputMessage2>
+server.on("/updates", HTTP_GET, [](AsyncWebServerRequest* request) {
+  String inputMessage;
+  String inputMessage2;
+  String inputParam;
+
+  //GET input1 value on <ESP_IP>/update?relay=<inputMessage>
+  if (request->hasParam(PARAM_INPUT_1) & request->hasParam(PARAM_INPUT_2)) {
+    inputMessage = request->getParam(PARAM_INPUT_1)->value();
+    inputMessage2 = request->getParam(PARAM_INPUT_2)->value();
+    inputParam = PARAM_INPUT_1;
+    if (RELAY_NO) {
+      Serial.print("NO ");
+      digitalWrite(relayGPIOs[inputMessage.toInt() - 1], !inputMessage2.toInt());
+
+    } else {
+      Serial.print("NC ");
+      digitalWrite(relayGPIOs[inputMessage.toInt() - 1], inputMessage2.toInt());
+    }
+  } else {
+    inputMessage = "No message sent";
+    inputParam = "none";
+  }
+  Serial.println(inputMessage + inputMessage2);
+  request->send(200, "text/plain", "OK");
+});
+
+
+// Add the following route after the /updates route in the setup function
+server.on("/schedule", HTTP_GET, [](AsyncWebServerRequest* request) {
+  String inputMessage;
+  String inputParam;
+
+  // GET input value on <ESP_IP>/schedule?state=<inputMessage>
+  if (request->hasParam(PARAM_INPUT_1)) {
+    inputMessage = request->getParam(PARAM_INPUT_1)->value();
+    inputParam = PARAM_INPUT_1;
+    // Enable or disable the schedule based on the received value
+    if (inputMessage.toInt() == 1) {
+      // Enable the schedule
+      scheduleEnabled = true;
+    } else {
+      // Disable the schedule
+      scheduleEnabled = false;
+    }
+    // Save the schedule state in the EEPROM
+    EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, scheduleEnabled);
+    EEPROM.commit();
+  } else {
+    inputMessage = "No message sent";
+    inputParam = "none";
+  }
+  Serial.println(inputMessage);
+  request->send(200, "text/plain", "OK");
+});
+
+  // Start server
+  AsyncElegantOTA.begin(&server);
+  server.begin();
+}
+
+
+void runSchedule() {
+
+  if (scheduleEnabled) {
+
+    // Set the start time for the daily test at 4:00 PM
+    int testStartHour = 16;
+    int testStartMinute = 0;
+
+    //***************************** Zone 1 Schedule *****************************************************
+    Serial.println("Setting Schedule ");
+
+    // Daily test
+    Alarm.alarmRepeat(testStartHour, testStartMinute, 0, Zone1On);
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 20, 0, Zone1Off);
+
+    //***************************** Zone 1 Schedule *****************************************************
+
+    //***************************** Zone 2 Schedule *****************************************************
+
+    // Daily test
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 20, 0, Zone2On);
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 40, 0, Zone2Off);
+
+    //***************************** Zone 2 Schedule *****************************************************
+
+    //***************************** Zone 3 Schedule *****************************************************
+
+    // Daily test
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 40, 0, Zone3On);
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 60, 0, Zone3Off);
+
+    //***************************** Zone 3 Schedule *****************************************************
+
+    //***************************** Zone 4 Schedule *****************************************************
+
+    // Daily test
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 60, 0, Zone4On);
+    Alarm.alarmRepeat(testStartHour, testStartMinute + 80, 0, Zone4Off);
+
+    //***************************** Zone 4 Schedule *****************************************************
+
+    /*
+
+  //***************************** Zone 5 Schedule *****************************************************
+  Serial.println("Setting Schedule ");
+
+  // Daily test
+  Alarm.alarmRepeat(testStartHour, testStartMinute, 80, Zone5On);
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 100, 0, Zone5Off);
+
+  //***************************** Zone 5 Schedule *****************************************************
+
+  //***************************** Zone 6 Schedule *****************************************************
+
+  // Daily test
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 100, 0, Zone6On);
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 120, 0, Zone6Off);
+
+  //***************************** Zone 6 Schedule *****************************************************
+
+  //***************************** Zone 7 Schedule *****************************************************
+
+  // Daily test
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 120, 0, Zone7On);
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 140, 0, Zone7Off);
+
+  //***************************** Zone 7 Schedule *****************************************************
+
+  //***************************** Zone 8 Schedule *****************************************************
+
+  // Daily test
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 140, 0, Zone8On);
+  Alarm.alarmRepeat(testStartHour, testStartMinute + 160, 0, Zone8Off);
+
+  //***************************** Zone 8 Schedule *****************************************************
+ */
+
+  } else {
+
+    Serial.println("No Schedule to run");
+  }
+}
+
+
+
+
+/* void setZoneSchedule(int zone, int startHour, int startMinute, int duration, int daysOfWeek[]) {
+  void (*zoneOn)();
+  void (*zoneOff)();
+
+  switch (zone) {
+    case 1:
+      zoneOn = Zone1On;
+      zoneOff = Zone1Off;
+      break;
+    case 2:
+      zoneOn = Zone2On;
+      zoneOff = Zone2Off;
+      break;
+    case 3:
+      zoneOn = Zone3On;
+      zoneOff = Zone3Off;
+      break;
+    case 4:
+      zoneOn = Zone4On;
+      zoneOff = Zone4Off;
+      break;
+  }
+
+  int endHour = startHour + (startMinute + duration) / 60;
+  int endMinute = (startMinute + duration) % 60;
+
+  for (int i = 0; daysOfWeek[i] != -1; i++) {
+    Alarm.alarmRepeat(daysOfWeek[i], startHour, startMinute, 0, zoneOn);
+    Alarm.alarmRepeat(daysOfWeek[i], endHour, endMinute, 0, zoneOff);
+  }
+}
+
+void runSchedule() {
+  Serial.println("Setting Schedule ");
+  int days[] = {dowTuesday, dowThursday, dowSaturday, dowSunday, -1};
+
+  for (int zone = 1; zone <= 4; zone++) {
+    int startHour = 16;
+    int startMinute = (zone - 1) * 20;
+    setZoneSchedule(zone, startHour, startMinute, 20, days);
+  }
+}
+
+*/
+void loop() {
+  Alarm.delay(0); // Continuously call TimeAlarms library to check for scheduled events
+}
+
+// functions to be called when an alarm triggers:
+void Zone1On() {
+  digitalWrite(relayGPIOs[1], LOW);
+}
+
+void Zone1Off() {
+  digitalWrite(relayGPIOs[1], HIGH);
+}
+
+void Zone2On() {
+  digitalWrite(relayGPIOs[2], LOW);
+}
+
+void Zone2Off() {
+  digitalWrite(relayGPIOs[2], HIGH);
+}
+
+void Zone3On() {
+  digitalWrite(relayGPIOs[3], LOW);
+}
+
+void Zone3Off() {
+  digitalWrite(relayGPIOs[3], HIGH);
+}
+
+void Zone4On() {
+  digitalWrite(relayGPIOs[4], LOW);
+}
+
+void Zone4Off() {
+  digitalWrite(relayGPIOs[4], HIGH);
+}
+
+/* Uncomment these to turn on more zones *************************************************************************************************
+void Zone5On() {
+  digitalWrite(relayAlarm5, LOW);
+}
+
+void Zone5Off() {
+  digitalWrite(relayAlarm5, HIGH);
+}
+
+void Zone6On() {
+  digitalWrite(relayAlarm6, LOW);
+}
+
+void Zone6Off() {
+  digitalWrite(relayAlarm6, HIGH);
+}
+
+void Zone7On() {
+  digitalWrite(relayAlarm7, LOW);
+}
+
+void Zone7Off() {
+  digitalWrite(relayAlarm7, HIGH);
+}
+
+void Zone8On() {
+  digitalWrite(relayAlarm8, LOW);
+}
+
+void Zone8Off() {
+  digitalWrite(relayAlarm8, HIGH);
+}
+*/
+//Uncomment these to turn on more zones *************************************************************************************************
+
+void UpdateNTP() {
+  Serial.println("TimeNTP Example");
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.print("IP number assigned by DHCP is ");
+  Serial.println(WiFi.localIP());
+
+  Serial.println("Starting UDP");
+  Udp.begin(localPort);
+  Serial.print("Local port: ");
+  //Serial.println(Udp.localPort());
+  Serial.println("waiting for sync");
+  setSyncProvider(getNtpTime);
+}
+
+void digitalClockDisplay() {
+  // digital clock display of the time
+  Serial.print(hour());
+  printDigits(minute());
+  printDigits(second());
+  Serial.print(" ");
+  Serial.print(day());
+  Serial.print(".");
+  Serial.print(month());
+  Serial.print(".");
+  Serial.print(year());
+  Serial.println();
+}
+
+
+
+void printDigits(int digits) {
+  // utility for digital clock display: prints preceding colon and leading 0
+  Serial.print(":");
+  if (digits < 10)
+    Serial.print('0');
+  Serial.print(digits);
+}
+
+/*-------- NTP code ----------*/
+
+const int NTP_PACKET_SIZE = 48;      // NTP time is in the first 48 bytes of message
+byte packetBuffer[NTP_PACKET_SIZE];  //buffer to hold incoming & outgoing packets
+
+time_t getNtpTime() {
+  while (Udp.parsePacket() > 0)
+    ;  // discard any previously received packets
+  Serial.println("Transmit NTP Request");
+  sendNTPpacket(timeServer);
+  uint32_t beginWait = millis();
+  while (millis() - beginWait < 1500) {
+    int size = Udp.parsePacket();
+    if (size >= NTP_PACKET_SIZE) {
+      Serial.println("Receive NTP Response");
+      Udp.read(packetBuffer, NTP_PACKET_SIZE);  // read packet into the buffer
+      unsigned long secsSince1900;
+      // convert four bytes starting at location 40 to a long integer
+      secsSince1900 = (unsigned long)packetBuffer[40] << 24;
+      secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
+      secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
+      secsSince1900 |= (unsigned long)packetBuffer[43];
+      return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
+    }
+  }
+  Serial.println("No NTP Response :-(");
+  return 0;  // return 0 if unable to get the time
+}
+
+// send an NTP request to the time server at the given address
+void sendNTPpacket(IPAddress& address) {
+  // set all bytes in the buffer to 0
+  memset(packetBuffer, 0, NTP_PACKET_SIZE);
+  // Initialize values needed to form NTP request
+  // (see URL above for details on the packets)
+  packetBuffer[0] = 0b11100011;  // LI, Version, Mode
+  packetBuffer[1] = 0;           // Stratum, or type of clock
+  packetBuffer[2] = 6;           // Polling Interval
+  packetBuffer[3] = 0xEC;        // Peer Clock Precision
+  // 8 bytes of zero for Root Delay & Root Dispersion
+  packetBuffer[12] = 49;
+  packetBuffer[13] = 0x4E;
+  packetBuffer[14] = 49;
+  packetBuffer[15] = 52;
+  // all NTP fields have been given values, now
+  // you can send a packet requesting a timestamp:
+  Udp.beginPacket(address, 123);  //NTP requests are to port 123
+  Udp.write(packetBuffer, NTP_PACKET_SIZE);
+  Udp.endPacket();
+}
