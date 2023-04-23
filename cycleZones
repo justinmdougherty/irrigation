@@ -64,6 +64,10 @@ const char index_html[] PROGMEM = R"rawliteral(
   <title>Irrigation</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
+    html {
+      font-family: Arial, sans-serif;
+      background-color: #f0f0f0;
+    }
     body {
       font-family: Arial, Helvetica, sans-serif;
       background-color: #f0f0f0;
@@ -236,7 +240,6 @@ function updateZoneStatus(currentZone, timeLeft) {
 }
 
 </script>
-</body>
 </html>
 )rawliteral";
 
