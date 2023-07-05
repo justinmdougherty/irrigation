@@ -593,7 +593,10 @@ void runSchedule() {
   if (scheduleEnabled) {
     // Clear previously selected days
     selectedDays.clear();
-
+    Serial.println("Schedule is on.");
+    Serial.println(daysOfWeek[EEPROM.read(EEPROM_DAY_ADDR)]);
+    Serial.println(EEPROM.read(EEPROM_HOUR_ADDR));
+    Serial.println(EEPROM.read(EEPROM_MIN_ADDR));
     // Read the duration and startTime values from the EEPROM
     duration = loadDuration();
     startTime = loadStartTime();
