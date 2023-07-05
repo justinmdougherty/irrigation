@@ -213,13 +213,9 @@ function saveSettings() {
   const startTime = document.getElementById('startTime').value;
   const days = Array.from(document.getElementById('days').selectedOptions).map(option => option.value);
 
-  // Convert the start time to 24-hour format
+  // Split the startTime into startHour and startMinute
   let [startHour, startMinute] = startTime.split(':').map(Number);
-  if (startHour === 12) {
-    startHour = 0;
-  } else if (startHour < 12 && isPm(startTime)) {
-    startHour += 12;
-  }
+  
   const startTime24 = `${startHour.toString().padStart(2, '0')}:${startMinute.toString().padStart(2, '0')}`;
 
   const queryParams = new URLSearchParams({
@@ -441,7 +437,7 @@ void setup() {
   // Print ESP32 Local IP Address
   Serial.println(WiFi.localIP());
 
-  
+
   timeClient.begin();
   timeClient.update();
 
@@ -593,88 +589,84 @@ void setup() {
   server.begin();
 }
 
-//Runs the schedule that is set via the web interface
 void runSchedule() {
-  // Clear previously selected days
-  selectedDays.clear();
-
-  // Read the duration and startTime values from the EEPROM
-  duration = loadDuration();
-  startTime = loadStartTime();
-
-  // Get the days string from EEPROM
-  String daysStr = loadDays();
-  char daysArray[daysStr.length() + 1];
-  daysStr.toCharArray(daysArray, daysStr.length() + 1);
-
   if (scheduleEnabled) {
-    Serial.println("Schedule enabled.");
+    // Clear previously selected days
+    selectedDays.clear();
+
+    // Read the duration and startTime values from the EEPROM
+    duration = loadDuration();
+    startTime = loadStartTime();
+
+    // Get the days string from EEPROM
+    String daysStr = loadDays();
+    char daysArray[daysStr.length() + 1];
+    daysStr.toCharArray(daysArray, daysStr.length() + 1);
+
+    // Tokenize the days string using ',' as a delimiter
+    char* token = strtok(daysArray, ",");
+    while (token != NULL) {
+      int day = atoi(token);
+      if (day >= 1 && day <= 7) {
+        selectedDays.push_back(day);
+      }
+      token = strtok(NULL, ",");
+    }
+
+    // Get duration and start time from input boxes
+    int durationMinutes = duration.toInt();
+    int colonIndex = startTime.indexOf(':');
+    int startHour = startTime.substring(0, colonIndex).toInt();
+    int startMinute = startTime.substring(colonIndex + 1).toInt();
+
+    // Get current time
+    int currentDay = weekday();
+    int currentHour = hour();
+    int currentMinute = minute();
+
+    // Set alarms for each selected day
+    for (int day : selectedDays) {
+      int originalStartMinute = startMinute;
+      for (int zone = 0; zone < NUM_RELAYS; ++zone) {
+        void (*zoneOnFunction)();
+        void (*zoneOffFunction)();
+        switch (zone) {
+          case 0:
+            zoneOnFunction = Zone1On;
+            zoneOffFunction = Zone1Off;
+            break;
+          case 1:
+            zoneOnFunction = Zone2On;
+            zoneOffFunction = Zone2Off;
+            break;
+          case 2:
+            zoneOnFunction = Zone3On;
+            zoneOffFunction = Zone3Off;
+            break;
+          case 3:
+            zoneOnFunction = Zone4On;
+            zoneOffFunction = Zone4Off;
+            break;
+            // Add more cases as needed...
+        }
+        if (currentDay == day && (currentHour < startHour || (currentHour == startHour && currentMinute <= startMinute))) {
+          Alarm.alarmOnce(startHour, startMinute, 0, zoneOnFunction);
+          Alarm.alarmOnce(startHour, startMinute + durationMinutes, 0, zoneOffFunction);
+        }
+        Alarm.alarmRepeat((timeDayOfWeek_t)day, startHour, startMinute, 0, zoneOnFunction);
+        Alarm.alarmRepeat((timeDayOfWeek_t)day, startHour, startMinute + durationMinutes, 0, zoneOffFunction);
+        startMinute += durationMinutes;
+      }
+      startMinute = originalStartMinute;
+    }
   } else {
     Serial.println("Schedule disabled.");
   }
-  // Get duration and start time from input boxes
-  int durationMinutes = duration.toInt();
-  int colonIndex = startTime.indexOf(':');
-  int testStartHour = startTime.substring(0, colonIndex).toInt();
-  int testStartMinute = startTime.substring(colonIndex + 1).toInt();
-
-  Serial.print("Duration: ");
-  Serial.print(durationMinutes);
-  Serial.print(" minutes, Start time: ");
-  Serial.print(testStartHour);
-  Serial.print(":");
-  Serial.println(testStartMinute);
-  ;
-
-
-  // Tokenize the days string using ',' as a delimiter
-  char* token = strtok(daysArray, ",");
-  while (token != NULL) {
-    int day = atoi(token);
-    if (day >= 1 && day <= 7) {
-      selectedDays.push_back(day);
-    }
-    token = strtok(NULL, ",");
-  }
-
-  Serial.print("Selected days: ");
-  for (int day : selectedDays) {
-    Serial.print(day);
-    Serial.print(" ");
-  }
-  Serial.println();
-
-  // Set alarms for each selected day
-  for (int day : selectedDays) {
-    int originalStartMinute = testStartMinute;
-
-    //***************************** Zone 1 Schedule *****************************************************
-    Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone1On);
-    Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone1Off);
-
-    testStartMinute += durationMinutes;
-
-    //***************************** Zone 2 Schedule *****************************************************
-    Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone2On);
-    Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone2Off);
-
-    testStartMinute += durationMinutes;
-
-    //***************************** Zone 3 Schedule *****************************************************
-    Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone3On);
-    Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone3Off);
-
-    testStartMinute += durationMinutes;
-
-    //***************************** Zone 4 Schedule *****************************************************
-    Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute, 0, Zone4On);
-    Alarm.alarmRepeat((timeDayOfWeek_t)day, testStartHour, testStartMinute + durationMinutes, 0, Zone4Off);
-
-    testStartMinute = originalStartMinute;
-  }
-  // You can add more zones by following the same pattern.
-  // Just update the testStartMinute before setting the alarms for each zone.
 }
+
+
+
+
 
 void loop() {
   timeClient.update();
