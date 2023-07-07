@@ -9,19 +9,22 @@
 #include <Time.h>
 #include <WiFiUdp.h>
 #include <EEPROM.h>
-#include <vector>
+//#include <vector>
 
-std::vector<int> selectedDays;
+//std::vector<int> selectedDays;
 
 //Used for "Time of last update"
 const char UPLOAD_TIME[] = __DATE__ " " __TIME__;
 
 const char* PARAM_DURATION = "duration";
 const char* PARAM_START_TIME = "startTime";
-const char* PARAM_DAYS = "days";
+//const char* PARAM_DAYS = "days";
 const int EEPROM_DURATION_ADDR = 6;
 const int EEPROM_STARTTIME_ADDR = 10;
 const int EEPROM_DAYS_ADDR = 20;
+#define EEPROM_ODD_DAYS_ADDR 10   // EEPROM address for 'oddDays' variable
+#define EEPROM_EVEN_DAYS_ADDR 11  // EEPROM address for 'evenDays' variable
+
 int relayIndexToTurnOff;
 
 WiFiUDP ntpUDP;
@@ -29,9 +32,9 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", -4 * 3600, 60000);
 
 String duration;
 String startTime;
-String daysArray;
+//String daysArray;
 
-const int EEPROM_MAX_DAYS_LENGTH = 20;  // Assuming a maximum of 20 characters for the days string
+//const int EEPROM_MAX_DAYS_LENGTH = 20;  // Assuming a maximum of 20 characters for the days string
 const int EEPROM_SCHEDULE_STATE_ADDR = 0;
 
 bool scheduleEnabled;
@@ -98,15 +101,18 @@ const char index_html[] PROGMEM = R"rawliteral(
   Schedule runs for <input type="number" id="duration" step="1" min="1" max="360" style="width: 40px;"> minutes<br>
   at <input type="time" id="startTime" style="width: 90px;"><br>
 <label for="days">Select days to run schedule:</label>
-<select name="days" id="days" multiple>
-  <option value="7">Sunday</option>
-  <option value="1">Monday</option>
-  <option value="2">Tuesday</option>
-  <option value="3">Wednesday</option>
-  <option value="4">Thursday</option>
-  <option value="5">Friday</option>
-  <option value="6">Saturday</option>
-</select>
+<div class="form-check">
+  <input class="form-check-input" type="checkbox" value="" id="oddDays" name="oddDays">
+  <label class="form-check-label" for="oddDays">
+    Water on Odd Days
+  </label>
+</div>
+<div class="form-check">
+  <input class="form-check-input" type="checkbox" value="" id="evenDays" name="evenDays">
+  <label class="form-check-label" for="evenDays">
+    Water on Even Days
+  </label>
+</div>
 <br>
   <button id="saveButton" onclick="saveSettings()">Save Settings</button>
   <br>
@@ -591,12 +597,75 @@ void setup() {
 
 void runSchedule() {
   if (scheduleEnabled) {
+
+    Serial.println("Schedule is on.");
+
+    // Read the duration and startTime values from the EEPROM
+    int duration = loadDuration();
+    String startTime = loadStartTime();
+
+    // Get the odd and even days watering flags from EEPROM
+    bool oddDaysWatering = EEPROM.read(EEPROM_ODD_DAYS_ADDR);
+    bool evenDaysWatering = EEPROM.read(EEPROM_EVEN_DAYS_ADDR);
+
+    // Get duration and start time from input boxes
+    int durationMinutes = duration;
+    int colonIndex = startTime.indexOf(':');
+    int startHour = startTime.substring(0, colonIndex).toInt();
+    int startMinute = startTime.substring(colonIndex + 1).toInt();
+
+    // Get current time
+    int currentDate = day();
+    int currentHour = hour();
+    int currentMinute = minute();
+
+    // Check if watering should be performed today
+    if ((oddDaysWatering && currentDate % 2 != 0) || (evenDaysWatering && currentDate % 2 == 0)) {
+      for (int zone = 0; zone < NUM_RELAYS; ++zone) {
+        if (currentHour < startHour || (currentHour == startHour && currentMinute <= startMinute)) {
+          // Update time
+          timeClient.update();
+
+          // Print statement
+          Serial.print("Current Date: ");
+          Serial.println(currentDate);
+          Serial.print("Current Time: ");
+          Serial.println(timeClient.getFormattedTime());
+          Serial.print("Scheduled Start Time: ");
+          Serial.print(startHour);
+          Serial.print(":");
+          Serial.println(startMinute);
+
+          // Alarm
+          Alarm.alarmOnce(startHour, startMinute, 0, []() {
+            digitalWrite(relayGPIOs[zone], LOW);
+          });
+          Alarm.alarmOnce(startHour, startMinute + durationMinutes, 0, []() {
+            digitalWrite(relayGPIOs[zone], HIGH);
+          });
+        }
+        Alarm.alarmRepeat(startHour, startMinute, 0, []() {
+          digitalWrite(relayGPIOs[zone], LOW);
+        });
+        Alarm.alarmRepeat(startHour, startMinute + durationMinutes, 0, []() {
+          digitalWrite(relayGPIOs[zone], HIGH);
+        });
+        startMinute += durationMinutes;
+      }
+    }
+  } else {
+    Serial.println("Schedule disabled.");
+  }
+}
+
+
+/* OLD
+void runSchedule() {
+  if (scheduleEnabled) {
     // Clear previously selected days
     selectedDays.clear();
     Serial.println("Schedule is on.");
-    Serial.println(daysOfWeek[EEPROM.read(EEPROM_DAY_ADDR)]);
-    Serial.println(EEPROM.read(EEPROM_HOUR_ADDR));
-    Serial.println(EEPROM.read(EEPROM_MIN_ADDR));
+    printSavedSettings();
     // Read the duration and startTime values from the EEPROM
     duration = loadDuration();
     startTime = loadStartTime();
@@ -666,15 +735,43 @@ void runSchedule() {
     Serial.println("Schedule disabled.");
   }
 }
+*/
 
+void printSavedSettings() {
+  // Read the duration, startTime and days values from the EEPROM
+  int durationVal = loadDuration();
+  String startTime = loadStartTime();
+  String days = loadDays();
 
+  // Convert the duration to a String
+  String duration = String(durationVal);
+
+  // Print the duration
+  Serial.println("Duration: " + duration);
+
+  // Print the startTime
+  Serial.println("Start time: " + startTime);
+
+  // Print the days
+  Serial.println("Days: " + days);
+}
 
 
 
 void loop() {
   timeClient.update();
   delay(1000);
+  
+  // Write to EEPROM
+  bool oddDays = true;
+  bool evenDays = false;
+  EEPROM.write(EEPROM_ODD_DAYS_ADDR, oddDays ? 1 : 0);
+  EEPROM.write(EEPROM_EVEN_DAYS_ADDR, evenDays ? 1 : 0);
+  EEPROM.commit();  // Make sure to commit the changes to save to EEPROM
 
+  // Read from EEPROM
+  oddDays = EEPROM.read(EEPROM_ODD_DAYS_ADDR) != 0;    // If the read byte is not 0, interpret as 'true'
+  evenDays = EEPROM.read(EEPROM_EVEN_DAYS_ADDR) != 0;  // If the read byte is not 0, interpret as 'true'
   if (debugMode) {
     Serial.print("Current time: ");
     Serial.println(timeClient.getFormattedTime());
