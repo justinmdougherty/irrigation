@@ -15,7 +15,6 @@ const char UPLOAD_TIME[] = __DATE__ " " __TIME__;
 
 const char* PARAM_DURATION = "duration";
 const char* PARAM_START_TIME = "startTime";
-//const char* PARAM_DAYS = "days";
 const int EEPROM_DURATION_ADDR = 6;
 const int EEPROM_STARTTIME_ADDR = 10;
 const int EEPROM_DAYS_ADDR = 20;
@@ -31,9 +30,7 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", -4 * 3600, 60000);
 
 String duration;
 String startTime;
-//String daysArray;
 
-//const int EEPROM_MAX_DAYS_LENGTH = 20;  // Assuming a maximum of 20 characters for the days string
 const int EEPROM_SCHEDULE_STATE_ADDR = 0;
 
 bool scheduleEnabled;
@@ -101,7 +98,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   <h3>Irrigation Web Server</h3>
   <br>
   Schedule runs for <input type="number" id="duration" step="1" min="1" max="360" style="width: 40px;"> minutes<br>
-  at <input type="time" id="startTime" style="width: 90px;"><br>
+  at <input type="time" id="startTime" style="width: 110px;"><br>
 <label for="days">Select days to run schedule:</label>
 <div class="form-check">
   <input class="form-check-input" type="checkbox" value="" id="oddDays" name="oddDays">
@@ -155,20 +152,14 @@ function loadSavedValues() {
       
       // If the scheduleType is a string ("even" or "odd"), just select that
       if (typeof scheduleType === "string") {
-        document.getElementById(scheduleType).selected = true;
-      } else {
-        // Otherwise, select the days specified in the scheduleType list
-        const daysSelect = document.getElementById("days");
-        for (const option of daysSelect.options) {
-          option.selected = scheduleType.includes(Number(option.value));
-        }
-      }
+        document.getElementById(scheduleType + "Days").checked = true;
+      } 
     }
   };
   // Send the request to fetch the saved values from your Arduino
   xhttp.open("GET", "/getSavedValues", true);
   xhttp.send();
-
+}
 function toggleSchedule(element) {
   var xhr = new XMLHttpRequest();
   var requestedState = element.checked ? "1" : "0";
@@ -198,17 +189,6 @@ function updateScheduleState(scheduleState) {
   scheduleStateText.innerHTML = scheduleState ? "Schedule ON" : "Schedule OFF";
 }
 
-function getSelectedDays() {
-  var daysSelect = document.getElementById("days");
-  var selectedDays = [];
-  for (var i = 0; i < daysSelect.length; i++) {
-    if (daysSelect.options[i].selected) {
-      selectedDays.push(daysSelect.options[i].value);
-    }
-  }
-  return selectedDays;
-}
-
 function requestScheduleState() {
   var xhr = new XMLHttpRequest();
   xhr.onreadystatechange = function() {
@@ -226,7 +206,8 @@ function requestScheduleState() {
 function saveSettings() {
   const duration = document.getElementById('duration').value;
   const startTime = document.getElementById('startTime').value;
-  const days = Array.from(document.getElementById('days').selectedOptions).map(option => option.value);
+  const oddDays = document.getElementById('oddDays').checked;
+  const evenDays = document.getElementById('evenDays').checked;
 
   // Split the startTime into startHour and startMinute
   let [startHour, startMinute] = startTime.split(':').map(Number);
@@ -236,7 +217,8 @@ function saveSettings() {
   const queryParams = new URLSearchParams({
     duration: duration,
     startTime: startTime24,
-    days: days.join(',')
+    oddDays: oddDays,
+    evenDays: evenDays
   });
 
   fetch('/save-settings?' + queryParams.toString())
@@ -246,7 +228,7 @@ function saveSettings() {
       console.log("Save settings response:", data);
 
       const currentTime = new Date().toLocaleTimeString();
-      const savedSettingsMessage = `Settings saved at ${currentTime}\nDuration: ${duration} minutes\nStart time: ${startTime}\nDays: ${days.join(', ')}`;
+      const savedSettingsMessage = `Settings saved at ${currentTime}\nDuration: ${duration} minutes\nStart time: ${startTime}\nOdd Days: ${oddDays}\nEven Days: ${evenDays}`;
       alert(savedSettingsMessage);
     })
     .catch(error => {
@@ -258,19 +240,13 @@ function onScheduleSliderChange() {
   const scheduleEnabled = document.getElementById("scheduleSlider").checked;
   const startTime = document.getElementById("startTime").value;
   const duration = document.getElementById("duration").value;
-  const daysArray = [];
-  for (let i = 1; i <= 7; i++) {
-    const dayCheckbox = document.getElementById(`day${i}`);
-    if (dayCheckbox.checked) {
-      daysArray.push(i);
-    }
-  }
-  const days = daysArray.join(",");
+  const oddDays = document.getElementById('oddDays').checked;
+  const evenDays = document.getElementById('evenDays').checked;
 
-  // paste applyschedule settings here
+  applyScheduleSettings(scheduleEnabled, startTime, duration, oddDays, evenDays);
 }
 
-function applyScheduleSettings(scheduleEnabled, startTime, duration, days) {
+function applyScheduleSettings(scheduleEnabled, startTime, duration, oddDays, evenDays) {
   const xhttp = new XMLHttpRequest();
   xhttp.onreadystatechange = function() {
     if (this.readyState == 4 && this.status == 200) {
@@ -279,7 +255,7 @@ function applyScheduleSettings(scheduleEnabled, startTime, duration, days) {
   };
 
   // Prepare the URL with the values as query parameters
-  const url = `/schedule?enabled=${scheduleEnabled}&startTime=${startTime}&duration=${duration}&days=${days}`;
+  const url = `/schedule?enabled=${scheduleEnabled}&startTime=${startTime}&duration=${duration}&oddDays=${oddDays}&evenDays=${evenDays}`;
 
   // Send the request
   xhttp.open("GET", url, true);
