@@ -9,9 +9,6 @@
 #include <Time.h>
 #include <WiFiUdp.h>
 #include <EEPROM.h>
-//#include <vector>
-
-//std::vector<int> selectedDays;
 
 //Used for "Time of last update"
 const char UPLOAD_TIME[] = __DATE__ " " __TIME__;
@@ -24,6 +21,8 @@ const int EEPROM_STARTTIME_ADDR = 10;
 const int EEPROM_DAYS_ADDR = 20;
 #define EEPROM_ODD_DAYS_ADDR 10   // EEPROM address for 'oddDays' variable
 #define EEPROM_EVEN_DAYS_ADDR 11  // EEPROM address for 'evenDays' variable
+
+#define INTERVAL_BETWEEN_ZONES 1 / 60  // Time in minutes
 
 int relayIndexToTurnOff;
 
@@ -68,6 +67,9 @@ const char* password = "JustinJamie11!!";
 
 const char* PARAM_INPUT_1 = "relay";
 const char* PARAM_INPUT_2 = "state";
+#define PARAM_ODD_DAYS "oddDays"
+#define PARAM_EVEN_DAYS "evenDays"
+
 
 
 // Create AsyncWebServer object on port 80
@@ -148,17 +150,24 @@ function loadSavedValues() {
       document.getElementById("startTime").value = response.startTime;
       document.getElementById("duration").value = response.duration;
 
-      const days = response.days.split(",").map(Number);
-      const daysSelect = document.getElementById("days");
-      for (const option of daysSelect.options) {
-        option.selected = days.includes(Number(option.value));
+      // The scheduleType attribute can be "even", "odd", or a list of days
+      const scheduleType = response.scheduleType;
+      
+      // If the scheduleType is a string ("even" or "odd"), just select that
+      if (typeof scheduleType === "string") {
+        document.getElementById(scheduleType).selected = true;
+      } else {
+        // Otherwise, select the days specified in the scheduleType list
+        const daysSelect = document.getElementById("days");
+        for (const option of daysSelect.options) {
+          option.selected = scheduleType.includes(Number(option.value));
+        }
       }
     }
   };
   // Send the request to fetch the saved values from your Arduino
   xhttp.open("GET", "/getSavedValues", true);
   xhttp.send();
-}
 
 function toggleSchedule(element) {
   var xhr = new XMLHttpRequest();
@@ -355,32 +364,6 @@ String loadStartTime() {
   return startTime;
 }
 
-void saveDays(String days) {
-  for (int i = 0; i < days.length(); i++) {
-    EEPROM.write(EEPROM_DAYS_ADDR + i, days[i]);
-  }
-  EEPROM.write(EEPROM_DAYS_ADDR + days.length(), '\0');
-  EEPROM.commit();
-  Serial.print("Saved days: ");
-  Serial.println(days);
-}
-
-String loadDays() {
-  String daysStr = "";
-  const int maxDaysStrLength = 20;
-  for (int i = 0; i < maxDaysStrLength; i++) {
-    char currentChar = char(EEPROM.read(EEPROM_DAYS_ADDR + i));
-    if (currentChar == '\0') {
-      break;
-    }
-    daysStr += currentChar;
-  }
-  return daysStr;
-}
-
-
-
-
 void saveScheduleState(bool state) {
   EEPROM.write(EEPROM_SCHEDULE_STATE_ADDR, state);
   EEPROM.commit();
@@ -390,6 +373,28 @@ void saveScheduleState(bool state) {
 
 bool loadScheduleState() {
   return EEPROM.read(EEPROM_SCHEDULE_STATE_ADDR);
+}
+
+void saveOddDays(bool oddDays) {
+  EEPROM.write(EEPROM_ODD_DAYS_ADDR, oddDays ? 1 : 0);
+  EEPROM.commit();
+  Serial.print("Saved odd days: ");
+  Serial.println(oddDays ? "true" : "false");
+}
+
+void saveEvenDays(bool evenDays) {
+  EEPROM.write(EEPROM_EVEN_DAYS_ADDR, evenDays ? 1 : 0);
+  EEPROM.commit();
+  Serial.print("Saved even days: ");
+  Serial.println(evenDays ? "true" : "false");
+}
+
+bool loadOddDays() {
+  return EEPROM.read(EEPROM_ODD_DAYS_ADDR) != 0;  // if the read byte is not 0, interpret as 'true'
+}
+
+bool loadEvenDays() {
+  return EEPROM.read(EEPROM_EVEN_DAYS_ADDR) != 0;  // if the read byte is not 0, interpret as 'true'
 }
 
 void turnOffRelayWithIndex() {
@@ -411,7 +416,7 @@ void setup() {
   scheduleEnabled = loadScheduleState();
   duration = loadDuration();
   startTime = loadStartTime();
-  daysArray = loadDays();
+  //daysArray = loadDays();
 
   pinMode(relayAlarm1, OUTPUT);
   pinMode(relayAlarm2, OUTPUT);
@@ -476,7 +481,7 @@ void setup() {
 
       // Check if the zone is manually toggled on and set a timer to turn it off after the duration
       if (inputMessage2.toInt() == 1) {
-        int durationInt = duration.toInt();
+        int durationInt = loadDuration();
         Serial.print("Duration: ");
         Serial.println(durationInt);
         relayIndexToTurnOff = relayIndex;
@@ -491,7 +496,6 @@ void setup() {
     request->send(200, "text/plain", "OK");
   });
 
-  //Checks the scheduleEnabled state, then gets the time, durateion and days for the schedule
   server.on("/schedule", HTTP_GET, [&](AsyncWebServerRequest* request) {
     String inputMessage;
 
@@ -511,9 +515,14 @@ void setup() {
       saveStartTime(startTime);
     }
 
-    if (request->hasParam(PARAM_DAYS)) {
-      daysArray = request->getParam(PARAM_DAYS)->value();
-      saveDays(daysArray);
+    if (request->hasParam(PARAM_ODD_DAYS)) {
+      bool oddDays = request->getParam(PARAM_ODD_DAYS)->value().equals("true");
+      saveOddDays(oddDays);
+    }
+
+    if (request->hasParam(PARAM_EVEN_DAYS)) {
+      bool evenDays = request->getParam(PARAM_EVEN_DAYS)->value().equals("true");
+      saveEvenDays(evenDays);
     }
 
     if (scheduleEnabled) {
@@ -526,11 +535,14 @@ void setup() {
     request->send(200, "text/plain", scheduleEnabled ? "1" : "0");
   });
 
+
+
   server.on("/getSavedValues", HTTP_GET, [](AsyncWebServerRequest* request) {
     String json = "{";
     json += "\"duration\":" + String(loadDuration()) + ",";
     json += "\"startTime\":\"" + loadStartTime() + "\",";
-    json += "\"days\":\"" + loadDays() + "\"";
+    json += "\"oddDays\":" + String(loadOddDays() ? "true" : "false") + ",";
+    json += "\"evenDays\":" + String(loadEvenDays() ? "true" : "false");
     json += "}";
     request->send(200, "application/json", json);
   });
@@ -551,9 +563,14 @@ void setup() {
       saveStartTime(startTime);
     }
 
-    if (request->hasParam(PARAM_DAYS)) {
-      String daysArray = request->getParam(PARAM_DAYS)->value();
-      saveDays(daysArray);
+    if (request->hasParam(PARAM_ODD_DAYS)) {
+      bool oddDays = request->getParam(PARAM_ODD_DAYS)->value().equals("true");
+      saveOddDays(oddDays);
+    }
+
+    if (request->hasParam(PARAM_EVEN_DAYS)) {
+      bool evenDays = request->getParam(PARAM_EVEN_DAYS)->value().equals("true");
+      saveEvenDays(evenDays);
     }
 
     // Set scheduleUpdated flag to true
@@ -562,7 +579,6 @@ void setup() {
 
     request->send(200, "text/plain", "OK");
   });
-
 
   server.on("/getStartTime", HTTP_GET, [](AsyncWebServerRequest* request) {
     String startTime = loadStartTime();
@@ -580,16 +596,21 @@ void setup() {
     request->send(200, "text/plain", startTimeBuf);
   });
 
-
   server.on("/getDuration", HTTP_GET, [](AsyncWebServerRequest* request) {
     int durationInt = loadDuration();
     request->send(200, "text/plain", String(durationInt));
   });
 
-
-  server.on("/getDays", HTTP_GET, [](AsyncWebServerRequest* request) {
-    request->send(200, "text/plain", loadDays());
+  server.on("/getOddDays", HTTP_GET, [](AsyncWebServerRequest* request) {
+    bool oddDays = loadOddDays();
+    request->send(200, "text/plain", oddDays ? "1" : "0");
   });
+
+  server.on("/getEvenDays", HTTP_GET, [](AsyncWebServerRequest* request) {
+    bool evenDays = loadEvenDays();
+    request->send(200, "text/plain", evenDays ? "1" : "0");
+  });
+
 
   AsyncElegantOTA.begin(&server);
   server.begin();
@@ -597,60 +618,51 @@ void setup() {
 
 void runSchedule() {
   if (scheduleEnabled) {
-
     Serial.println("Schedule is on.");
-
+    printSavedSettings();
     // Read the duration and startTime values from the EEPROM
     int duration = loadDuration();
     String startTime = loadStartTime();
 
-    // Get the odd and even days watering flags from EEPROM
-    bool oddDaysWatering = EEPROM.read(EEPROM_ODD_DAYS_ADDR);
-    bool evenDaysWatering = EEPROM.read(EEPROM_EVEN_DAYS_ADDR);
-
-    // Get duration and start time from input boxes
-    int durationMinutes = duration;
+    // Get the start time from the string
     int colonIndex = startTime.indexOf(':');
     int startHour = startTime.substring(0, colonIndex).toInt();
     int startMinute = startTime.substring(colonIndex + 1).toInt();
 
-    // Get current time
+    // Get the current date
     int currentDate = day();
-    int currentHour = hour();
-    int currentMinute = minute();
+
+    // Get the odd and even days watering flags from EEPROM
+    bool oddDaysWatering = loadOddDays();
+    bool evenDaysWatering = loadEvenDays();
 
     // Check if watering should be performed today
-    if ((oddDaysWatering && currentDate % 2 != 0) || (evenDaysWatering && currentDate % 2 == 0)) {
+    bool isWateringDay = ((oddDaysWatering && currentDate % 2 != 0) || (evenDaysWatering && currentDate % 2 == 0));
+
+    if (isWateringDay) {
+      // Iterate over the zones
       for (int zone = 0; zone < NUM_RELAYS; ++zone) {
-        if (currentHour < startHour || (currentHour == startHour && currentMinute <= startMinute)) {
-          // Update time
-          timeClient.update();
+        // Turn on the zone
+        digitalWrite(relayGPIOs[zone], LOW);
+        // Log the operation
+        Serial.print("Zone ");
+        Serial.print(zone + 1);
+        Serial.println(" On");
 
-          // Print statement
-          Serial.print("Current Date: ");
-          Serial.println(currentDate);
-          Serial.print("Current Time: ");
-          Serial.println(timeClient.getFormattedTime());
-          Serial.print("Scheduled Start Time: ");
-          Serial.print(startHour);
-          Serial.print(":");
-          Serial.println(startMinute);
+        // Wait for the duration time
+        delay(duration * 60 * 1000);
 
-          // Alarm
-          Alarm.alarmOnce(startHour, startMinute, 0, []() {
-            digitalWrite(relayGPIOs[zone], LOW);
-          });
-          Alarm.alarmOnce(startHour, startMinute + durationMinutes, 0, []() {
-            digitalWrite(relayGPIOs[zone], HIGH);
-          });
+        // Turn off the zone
+        digitalWrite(relayGPIOs[zone], HIGH);
+        // Log the operation
+        Serial.print("Zone ");
+        Serial.print(zone + 1);
+        Serial.println(" Off");
+
+        // Wait for the interval between zones
+        if (zone < NUM_RELAYS - 1) {
+          delay(INTERVAL_BETWEEN_ZONES * 60 * 1000);
         }
-        Alarm.alarmRepeat(startHour, startMinute, 0, []() {
-          digitalWrite(relayGPIOs[zone], LOW);
-        });
-        Alarm.alarmRepeat(startHour, startMinute + durationMinutes, 0, []() {
-          digitalWrite(relayGPIOs[zone], HIGH);
-        });
-        startMinute += durationMinutes;
       }
     }
   } else {
@@ -659,89 +671,16 @@ void runSchedule() {
 }
 
 
-/* OLD
-void runSchedule() {
-  if (scheduleEnabled) {
-    // Clear previously selected days
-    selectedDays.clear();
-    Serial.println("Schedule is on.");
-    printSavedSettings();
-    // Read the duration and startTime values from the EEPROM
-    duration = loadDuration();
-    startTime = loadStartTime();
 
-    // Get the days string from EEPROM
-    String daysStr = loadDays();
-    char daysArray[daysStr.length() + 1];
-    daysStr.toCharArray(daysArray, daysStr.length() + 1);
-
-    // Tokenize the days string using ',' as a delimiter
-    char* token = strtok(daysArray, ",");
-    while (token != NULL) {
-      int day = atoi(token);
-      if (day >= 1 && day <= 7) {
-        selectedDays.push_back(day);
-      }
-      token = strtok(NULL, ",");
-    }
-
-    // Get duration and start time from input boxes
-    int durationMinutes = duration.toInt();
-    int colonIndex = startTime.indexOf(':');
-    int startHour = startTime.substring(0, colonIndex).toInt();
-    int startMinute = startTime.substring(colonIndex + 1).toInt();
-
-    // Get current time
-    int currentDay = weekday();
-    int currentHour = hour();
-    int currentMinute = minute();
-
-    // Set alarms for each selected day
-    for (int day : selectedDays) {
-      int originalStartMinute = startMinute;
-      for (int zone = 0; zone < NUM_RELAYS; ++zone) {
-        void (*zoneOnFunction)();
-        void (*zoneOffFunction)();
-        switch (zone) {
-          case 0:
-            zoneOnFunction = Zone1On;
-            zoneOffFunction = Zone1Off;
-            break;
-          case 1:
-            zoneOnFunction = Zone2On;
-            zoneOffFunction = Zone2Off;
-            break;
-          case 2:
-            zoneOnFunction = Zone3On;
-            zoneOffFunction = Zone3Off;
-            break;
-          case 3:
-            zoneOnFunction = Zone4On;
-            zoneOffFunction = Zone4Off;
-            break;
-            // Add more cases as needed...
-        }
-        if (currentDay == day && (currentHour < startHour || (currentHour == startHour && currentMinute <= startMinute))) {
-          Alarm.alarmOnce(startHour, startMinute, 0, zoneOnFunction);
-          Alarm.alarmOnce(startHour, startMinute + durationMinutes, 0, zoneOffFunction);
-        }
-        Alarm.alarmRepeat((timeDayOfWeek_t)day, startHour, startMinute, 0, zoneOnFunction);
-        Alarm.alarmRepeat((timeDayOfWeek_t)day, startHour, startMinute + durationMinutes, 0, zoneOffFunction);
-        startMinute += durationMinutes;
-      }
-      startMinute = originalStartMinute;
-    }
-  } else {
-    Serial.println("Schedule disabled.");
-  }
-}
-*/
 
 void printSavedSettings() {
-  // Read the duration, startTime and days values from the EEPROM
+  // Read the duration, startTime values from the EEPROM
   int durationVal = loadDuration();
   String startTime = loadStartTime();
-  String days = loadDays();
+
+  // Read odd and even days values from the EEPROM
+  bool oddDays = loadOddDays();
+  bool evenDays = loadEvenDays();
 
   // Convert the duration to a String
   String duration = String(durationVal);
@@ -753,35 +692,52 @@ void printSavedSettings() {
   Serial.println("Start time: " + startTime);
 
   // Print the days
+  String days = "";
+  if (oddDays && evenDays) {
+    days = "even, odd";
+  } else if (oddDays) {
+    days = "odd";
+  } else if (evenDays) {
+    days = "even";
+  }
   Serial.println("Days: " + days);
 }
 
 
 
+
 void loop() {
   timeClient.update();
-  delay(1000);
-  
-  // Write to EEPROM
-  bool oddDays = true;
-  bool evenDays = false;
-  EEPROM.write(EEPROM_ODD_DAYS_ADDR, oddDays ? 1 : 0);
-  EEPROM.write(EEPROM_EVEN_DAYS_ADDR, evenDays ? 1 : 0);
-  EEPROM.commit();  // Make sure to commit the changes to save to EEPROM
+  Alarm.delay(1000);
 
-  // Read from EEPROM
-  oddDays = EEPROM.read(EEPROM_ODD_DAYS_ADDR) != 0;    // If the read byte is not 0, interpret as 'true'
-  evenDays = EEPROM.read(EEPROM_EVEN_DAYS_ADDR) != 0;  // If the read byte is not 0, interpret as 'true'
-  if (debugMode) {
-    Serial.print("Current time: ");
-    Serial.println(timeClient.getFormattedTime());
-  }
+  // Get the current date, hour and minute
+  int currentDay = day();
+  int currentHour = hour();
+  int currentMinute = minute();
 
-  if (scheduleUpdated) {
-    runSchedule();
-    scheduleUpdated = false;
+  // Read start time from EEPROM
+  String startTime = loadStartTime();
+  int colonIndex = startTime.indexOf(':');
+  int startHour = startTime.substring(0, colonIndex).toInt();
+  int startMinute = startTime.substring(colonIndex + 1).toInt();
+
+  // Read the odd and even days watering flags from EEPROM
+  bool oddDaysWatering = EEPROM.read(EEPROM_ODD_DAYS_ADDR);
+  bool evenDaysWatering = EEPROM.read(EEPROM_EVEN_DAYS_ADDR);
+
+  // Check if watering should be performed today
+  bool isWateringDay = ((oddDaysWatering && currentDay % 2 != 0) || (evenDaysWatering && currentDay % 2 == 0));
+
+  // Check if current time is the start time and if today is a watering day
+  if (currentHour == startHour && currentMinute == startMinute && isWateringDay) {
+    // Run the schedule if the schedule toggle is enabled
+    if (scheduleEnabled) {
+      runSchedule();
+      Alarm.delay(60000);  // Prevent from calling the runSchedule() function multiple times in the same minute
+    }
   }
 }
+
 
 // functions to be called when an alarm triggers:
 void Zone1On() {
